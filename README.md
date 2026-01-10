@@ -51,6 +51,14 @@ Click the menu bar icon to see today's schedule. Open Settings to:
 - macOS 14.0 (Sonoma) or later - macOS 15.0 (Sequoia) recommended
 - Aerial wallpapers must be downloaded first: System Settings > Wallpaper > select an aerial collection
 
+## Permissions
+
+When you first run Sunpaper, macOS may warn that it's from an unidentified developer. Right-click the app and choose "Open" to bypass this.
+
+The app needs:
+- **Location** - to calculate sunrise/sunset times for your area
+- **File access** - to update the system wallpaper configuration
+
 ## Known Issues
 
 - **Brief gray flash during transitions** - you may see a gray screen for less than a second while the new video loads. This is a limitation of how macOS refreshes video wallpapers.
