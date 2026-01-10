@@ -1,0 +1,46 @@
+# Xcode
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+DerivedData/
+*.moved-aside
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Build
+build/
+*.app
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# macOS
+.DS_Store
+*.plist.backup
+
+# IDE
+.idea/
+*.swp
+.vscode/
+
+# Archives
+*.xcarchive
+
+# Code signing
+*.mobileprovision
+*.p12
+
+# Distribution
+dist/
+
+# Scripts (icon generators, etc)
+scripts/
+
+# Profiling
+*.profraw
+
+# Private notes
+notes-to-self.md
