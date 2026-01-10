@@ -4,6 +4,16 @@ Automatically change video wallpapers on macOS.
 
 Apple's aerial wallpaper collections (Tahoe, Sequoia) include time-of-day variants - morning, day, evening, and night versions of the same location. Sunpaper switches between them based on the actual sun position at your location.
 
+### Why isn't this on the App Store?
+
+macOS doesn't provide a public API for changing video wallpapers. Sunpaper works by updating the system's wallpaper configuration file directly, which requires file system access that App Store sandboxing doesn't allow.
+
+## Download
+
+**[Download Sunpaper 1.0](https://github.com/mduncs/sunpaper/releases/latest)**
+
+Click the link above, then click **Sunpaper-1.0.zip** to download. Unzip it and drag Sunpaper.app to your Applications folder.
+
 ## Screenshots
 
 <p align="center">
@@ -28,23 +38,6 @@ The app references wallpapers already on your Mac. If you haven't downloaded an 
 - **Multiple collections** - Tahoe and Sequoia built-in
 - **Multi-monitor support** - same wallpaper on all displays, or configure each separately
 - **Launch at login** - runs quietly in the background
-
-## How It Works
-
-Apple's aerial collections are designed with time-of-day in mind:
-- **Tahoe** has morning, day, evening, and night variants
-- **Sequoia** has sunrise, day, and night variants
-
-Sunpaper calculates sunrise and sunset times for your location using the NOAA solar position algorithm, then switches to the matching wallpaper variant. Morning light on screen as the sun comes up, night sky when it gets dark.
-
-## Settings
-
-Click the menu bar icon to see today's schedule. Open Settings to:
-
-- Add or remove time slots
-- Set triggers relative to solar events (e.g., "30 minutes before sunset") or fixed times
-- Choose which variant plays at each time of day
-- Configure per-display wallpapers
 
 ## Requirements
 
@@ -73,13 +66,9 @@ xcodebuild -scheme Sunpaper -configuration Release
 
 The built app will be in `build/Build/Products/Release/Sunpaper.app`
 
-## Why Not on the App Store?
-
-macOS doesn't provide a public API for changing video wallpapers. Sunpaper works by updating the system's wallpaper configuration file directly, which requires file system access that App Store sandboxing doesn't allow.
-
 ## Credits
 
-Built with Claude (Anthropic). Solar calculations based on NOAA's solar position equations.
+Built with Claude (Anthropic).
 
 ## License
 
