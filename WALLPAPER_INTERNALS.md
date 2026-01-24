@@ -9,7 +9,7 @@ The wallpaper configuration lives at:
 ~/Library/Application Support/com.apple.wallpaper/Store/Index.plist
 ```
 
-**CRITICAL**: This plist has TWO different modes that use DIFFERENT keypaths:
+**CRITICAL**: This plist has THREE different modes that use DIFFERENT keypaths:
 
 #### Mode 1: "linked" (all displays same wallpaper)
 ```
@@ -21,9 +21,19 @@ Displays = {} (empty)
 
 #### Mode 2: "individual" (per-display wallpapers)
 ```
-AllSpacesAndDisplays.Type = "idle" or "individual"
+AllSpacesAndDisplays.Type = "individual"
 Displays.<UUID>.Desktop.Content.Choices.0.Configuration      <- SET EACH DISPLAY
 ```
+
+#### Mode 3: "idle" (BREAKS OUR APPROACH)
+```
+AllSpacesAndDisplays.Type = "idle"
+AllSpacesAndDisplays.Idle.Content.Choices.0.Configuration    <- Different structure!
+Displays.<UUID>.Idle.Content.Choices.0.Configuration         <- Also different!
+```
+
+**WARNING**: If the plist is in "idle" mode, writing to Linked or Desktop paths does nothing.
+The app detects this and forces the plist back to "linked" mode before making changes.
 
 ### How to Change Aerial Wallpapers
 
@@ -76,6 +86,11 @@ Night:   CF6347E2-4F81-4410-8892-4830991B6C5A
 4. **NOT killing WallpaperAgent after modifying**: The process won't pick up new plist values unless restarted. Kill it AFTER modifying too.
 
 5. **Wrong Provider value**: Aerials need `Provider = "com.apple.wallpaper.choice.aerials"` (not "image").
+
+6. **Plist in "idle" mode**: If `AllSpacesAndDisplays.Type` is "idle", writes to Linked/Desktop paths silently fail. Force it to "linked" first:
+   ```bash
+   plutil -replace "AllSpacesAndDisplays.Type" -string "linked" "$PLIST"
+   ```
 
 ### How to Debug
 

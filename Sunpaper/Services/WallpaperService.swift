@@ -168,6 +168,7 @@ class WallpaperService {
 
     /// Get all display key paths from the Index.plist
     /// Detects whether plist uses "linked" mode (all displays same) or "individual" mode (per-display)
+    /// If plist is in "idle" mode, forces it to "linked" mode first
     private func getAllDisplayKeyPaths() throws -> [String] {
         guard let plistData = FileManager.default.contents(atPath: indexPlistURL.path),
               let plist = try PropertyListSerialization.propertyList(from: plistData, format: nil) as? [String: Any] else {
@@ -189,6 +190,16 @@ class WallpaperService {
                     "SystemDefault.Linked.Content.Choices.0.Configuration"
                 ]
             }
+
+            if typeValue == "idle" {
+                // Idle mode: need to force to linked mode for our changes to work
+                // The plist structure is different in idle mode and our writes won't take effect
+                forceLinkedMode()
+                return [
+                    "AllSpacesAndDisplays.Linked.Content.Choices.0.Configuration",
+                    "SystemDefault.Linked.Content.Choices.0.Configuration"
+                ]
+            }
         }
 
         // Individual/per-display mode: each display has its own config
@@ -205,6 +216,24 @@ class WallpaperService {
             "AllSpacesAndDisplays.Linked.Content.Choices.0.Configuration",
             "SystemDefault.Linked.Content.Choices.0.Configuration"
         ]
+    }
+
+    /// Force the plist into linked mode when it's in idle mode
+    /// This is necessary because idle mode has a different structure that doesn't respond to our writes
+    private func forceLinkedMode() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/plutil")
+        process.arguments = [
+            "-replace", "AllSpacesAndDisplays.Type",
+            "-string", "linked",
+            indexPlistURL.path
+        ]
+        try? process.run()
+        process.waitUntilExit()
+
+        #if DEBUG
+        print("[WallpaperService] Forced plist from idle to linked mode")
+        #endif
     }
 
     private func killWallpaperProcesses() {
