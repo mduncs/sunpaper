@@ -103,6 +103,25 @@ final class WallpaperServiceTests: XCTestCase {
         )
     }
 
+    func testAerialNotDownloadedErrorDescription() {
+        let assetID = "4C108785-A7BA-422E-9C79-B0129F1D5550"
+        let error = WallpaperError.aerialNotDownloaded(assetID: assetID)
+
+        XCTAssertNotNil(error.errorDescription, "Error should have description")
+        XCTAssertTrue(
+            error.errorDescription?.contains("not downloaded") ?? false,
+            "Error should mention not downloaded"
+        )
+        XCTAssertTrue(
+            error.errorDescription?.contains("System Settings") ?? false,
+            "Error should suggest System Settings"
+        )
+        XCTAssertTrue(
+            error.errorDescription?.contains(assetID) ?? false,
+            "Error should include the asset ID"
+        )
+    }
+
     // MARK: - LocalizedError Conformance
 
     func testErrorDescriptionIsUserFriendly() {
@@ -114,7 +133,8 @@ final class WallpaperServiceTests: XCTestCase {
             .customFileNotFound(path: "/test.jpg"),
             .customVideoNotSupported,
             .unsupportedFormat(ext: "xyz"),
-            .noMainScreen
+            .noMainScreen,
+            .aerialNotDownloaded(assetID: "test-asset-id")
         ]
 
         for error in errors {
@@ -211,7 +231,7 @@ final class WallpaperServiceTests: XCTestCase {
                     XCTFail(".\(ext) file exists but got customFileNotFound error")
                 case .customVideoNotSupported:
                     XCTFail(".\(ext) is an image but got customVideoNotSupported error")
-                case .noMainScreen, .plistNotFound, .plistUpdateFailed, .agentRestartFailed:
+                case .noMainScreen, .plistNotFound, .plistUpdateFailed, .agentRestartFailed, .aerialNotDownloaded:
                     // These are acceptable - system/environment issues, not format issues
                     break
                 }
@@ -325,7 +345,8 @@ final class WallpaperServiceTests: XCTestCase {
             .customFileNotFound(path: "/test"),
             .customVideoNotSupported,
             .unsupportedFormat(ext: "xyz"),
-            .noMainScreen
+            .noMainScreen,
+            .aerialNotDownloaded(assetID: "test-asset")
         ]
 
         // Each error should have a unique description

@@ -15,7 +15,21 @@ class WallpaperService {
             .appendingPathComponent("Index.plist")
     }()
 
+    private let videosDirectoryURL: URL = {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return appSupport
+            .appendingPathComponent("com.apple.wallpaper")
+            .appendingPathComponent("aerials")
+            .appendingPathComponent("videos")
+    }()
+
     private init() {}
+
+    /// Check if an aerial video is downloaded
+    func isAerialDownloaded(assetID: String) -> Bool {
+        let videoPath = videosDirectoryURL.appendingPathComponent("\(assetID).mov")
+        return FileManager.default.fileExists(atPath: videoPath.path)
+    }
 
     /// Set wallpaper by asset ID for all displays
     /// - Parameter assetID: UUID of the aerial wallpaper (e.g., "4C108785-A7BA-422E-9C79-B0129F1D5550")
@@ -31,6 +45,11 @@ class WallpaperService {
         // Check if Index.plist exists
         guard FileManager.default.fileExists(atPath: indexPlistURL.path) else {
             throw WallpaperError.plistNotFound
+        }
+
+        // Check if the aerial video is downloaded
+        guard isAerialDownloaded(assetID: assetID) else {
+            throw WallpaperError.aerialNotDownloaded(assetID: assetID)
         }
 
         // Create config dict
@@ -275,6 +294,7 @@ enum WallpaperError: LocalizedError {
     case customVideoNotSupported
     case unsupportedFormat(ext: String)
     case noMainScreen
+    case aerialNotDownloaded(assetID: String)
 
     var errorDescription: String? {
         switch self {
@@ -292,6 +312,8 @@ enum WallpaperError: LocalizedError {
             return "Unsupported wallpaper format: .\(ext)"
         case .noMainScreen:
             return "No main screen found"
+        case .aerialNotDownloaded(let assetID):
+            return "Aerial wallpaper not downloaded. Open System Settings > Wallpaper and download the aerial collection first. (Asset: \(assetID))"
         }
     }
 }
