@@ -1,5 +1,6 @@
 import Foundation
 import CoreLocation
+import AppKit
 
 /// Manages wallpaper scheduling based on flexible time slots
 class SlotScheduler: ObservableObject {
@@ -17,6 +18,8 @@ class SlotScheduler: ObservableObject {
     private var locationProvider: () -> CLLocationCoordinate2D?
     private var timer: Timer?
     private var prefetchTimer: Timer?
+    private var verifyTimer: Timer?
+    private var wakeObserver: NSObjectProtocol?
     private var lastAppliedSlotID: UUID?
 
     // MARK: - Init
@@ -31,6 +34,8 @@ class SlotScheduler: ObservableObject {
     func start() {
         updateNow()
         scheduleNextUpdate()
+        startVerifyTimer()
+        observeWake()
     }
 
     func stop() {
@@ -38,6 +43,12 @@ class SlotScheduler: ObservableObject {
         timer = nil
         prefetchTimer?.invalidate()
         prefetchTimer = nil
+        verifyTimer?.invalidate()
+        verifyTimer = nil
+        if let obs = wakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(obs)
+            wakeObserver = nil
+        }
     }
 
     func updateConfig(_ newConfig: WallpaperConfig) {
@@ -249,6 +260,75 @@ class SlotScheduler: ObservableObject {
             prefetchUpcoming()
         }
     }
+
+    // MARK: - Wallpaper Verification
+
+    /// Periodically verify the active wallpaper matches what we expect
+    private func startVerifyTimer() {
+        verifyTimer = Timer.scheduledTimer(withTimeInterval: 1800, repeats: true) { [weak self] _ in
+            self?.verifyCurrentWallpaper()
+        }
+    }
+
+    /// Re-verify wallpaper after waking from sleep
+    private func observeWake() {
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            // Brief delay for system to stabilize after wake
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
+                self?.verifyCurrentWallpaper()
+            }
+        }
+    }
+
+    /// Compare active wallpaper against expected slot; re-download and reapply if mismatched
+    private func verifyCurrentWallpaper() {
+        guard config.enableSolarTracking else { return }
+        guard let location = locationProvider() else { return }
+
+        let sunTimes = SunCalculator.calculate(for: location)
+        guard let slot = config.currentSlot(sunTimes: sunTimes) else { return }
+        guard case .builtIn(let expectedAssetID) = slot.source else { return }
+
+        // Check what's actually set in the plist
+        let currentAssetID = try? WallpaperService.shared.getCurrentAssetID()
+        guard currentAssetID != expectedAssetID else { return }
+
+        #if DEBUG
+        print("[Scheduler] Wallpaper mismatch: expected \(expectedAssetID), got \(currentAssetID ?? "nil"). Repairing...")
+        #endif
+
+        if !WallpaperService.shared.isAerialDownloaded(assetID: expectedAssetID) {
+            // Need to download first, then reapply
+            Task { @MainActor in
+                guard let asset = AerialCatalog.shared.asset(for: expectedAssetID),
+                      let urlString = asset.videoURL,
+                      let url = URL(string: urlString) else { return }
+
+                do {
+                    try await WallpaperService.shared.downloadAerial(assetID: expectedAssetID, from: url)
+                } catch {
+                    #if DEBUG
+                    print("[Scheduler] Verify download failed: \(error)")
+                    #endif
+                    return
+                }
+
+                // Force reapply after download
+                self.lastAppliedSlotID = nil
+                self.updateNow()
+            }
+        } else {
+            // Downloaded but wrong wallpaper active - force reapply
+            lastAppliedSlotID = nil
+            updateNow()
+        }
+    }
+
+    // MARK: - Prefetch
 
     /// Check if upcoming wallpaper aerials are downloaded, download if missing
     private func prefetchUpcoming() {
