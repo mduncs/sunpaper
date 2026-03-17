@@ -1,5 +1,6 @@
 import SwiftUI
 import CoreLocation
+import Combine
 
 @main
 struct SunpaperApp: App {
@@ -21,6 +22,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate {
 
     private var currentLocation: CLLocationCoordinate2D?
     private var config: WallpaperConfig = .default
+    private var cancellables = Set<AnyCancellable>()
 
     // Exposed for MenuBarView
     var currentSlot: TimeSlot? {
@@ -128,6 +130,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate {
             locationProvider: { [weak self] in self?.currentLocation }
         )
         scheduler?.start()
+
+        // Update menu bar icon when downloading
+        scheduler?.$isDownloading
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] downloading in
+                guard let button = self?.statusItem.button else { return }
+                let icon = downloading ? "icloud.and.arrow.down.fill" : "sun.horizon.fill"
+                button.image = NSImage(systemSymbolName: icon, accessibilityDescription: "Sunpaper")
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - Actions

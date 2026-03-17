@@ -11,6 +11,7 @@ class SlotScheduler: ObservableObject {
     @Published private(set) var nextTransition: (slot: TimeSlot, date: Date)?
     @Published private(set) var todaySchedule: [(slot: TimeSlot, time: Date)] = []
     @Published private(set) var lastError: String?
+    @Published private(set) var isDownloading = false
 
     // MARK: - Private State
 
@@ -79,6 +80,9 @@ class SlotScheduler: ObservableObject {
                         lastError = "No download URL for aerial \(assetID)"
                         return
                     }
+
+                    self.isDownloading = true
+                    defer { self.isDownloading = false }
 
                     do {
                         try await WallpaperService.shared.downloadAerial(assetID: assetID, from: url)
@@ -338,6 +342,9 @@ class SlotScheduler: ObservableObject {
                       let urlString = asset.videoURL,
                       let url = URL(string: urlString) else { return }
 
+                self.isDownloading = true
+                defer { self.isDownloading = false }
+
                 do {
                     try await WallpaperService.shared.downloadAerial(assetID: expectedAssetID, from: url)
                 } catch {
@@ -403,6 +410,9 @@ class SlotScheduler: ObservableObject {
         #endif
 
         Task { @MainActor in
+            self.isDownloading = true
+            defer { self.isDownloading = false }
+
             for assetID in missing {
                 guard let asset = AerialCatalog.shared.asset(for: assetID),
                       let urlString = asset.videoURL,
