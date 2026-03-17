@@ -44,3 +44,6 @@ scripts/
 
 # Private notes
 notes-to-self.md
+
+# Local dev scripts
+reinstall.sh
