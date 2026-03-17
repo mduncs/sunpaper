@@ -25,6 +25,43 @@ class WallpaperService {
 
     private init() {}
 
+    /// Download an aerial video to the local videos directory
+    func downloadAerial(assetID: String, from url: URL) async throws {
+        let destination = videosDirectoryURL.appendingPathComponent("\(assetID).mov")
+
+        // Already downloaded
+        guard !FileManager.default.fileExists(atPath: destination.path) else { return }
+
+        // Ensure videos directory exists
+        try FileManager.default.createDirectory(at: videosDirectoryURL, withIntermediateDirectories: true)
+
+        #if DEBUG
+        print("[WallpaperService] Downloading aerial \(assetID) from \(url)")
+        #endif
+
+        let (tempURL, response) = try await URLSession.shared.download(from: url)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            try? FileManager.default.removeItem(at: tempURL)
+            throw WallpaperError.downloadFailed(assetID: assetID)
+        }
+
+        // Atomic move to destination. If another download finished first, that's fine.
+        do {
+            try FileManager.default.moveItem(at: tempURL, to: destination)
+            #if DEBUG
+            print("[WallpaperService] Downloaded aerial \(assetID)")
+            #endif
+        } catch {
+            // File already exists (race condition) - clean up temp
+            try? FileManager.default.removeItem(at: tempURL)
+            guard FileManager.default.fileExists(atPath: destination.path) else {
+                throw error
+            }
+        }
+    }
+
     /// Check if an aerial video is downloaded
     func isAerialDownloaded(assetID: String) -> Bool {
         let videoPath = videosDirectoryURL.appendingPathComponent("\(assetID).mov")
@@ -295,6 +332,7 @@ enum WallpaperError: LocalizedError {
     case unsupportedFormat(ext: String)
     case noMainScreen
     case aerialNotDownloaded(assetID: String)
+    case downloadFailed(assetID: String)
 
     var errorDescription: String? {
         switch self {
@@ -314,6 +352,8 @@ enum WallpaperError: LocalizedError {
             return "No main screen found"
         case .aerialNotDownloaded(let assetID):
             return "Aerial wallpaper not downloaded. Open System Settings > Wallpaper and download the aerial collection first. (Asset: \(assetID))"
+        case .downloadFailed(let assetID):
+            return "Failed to download aerial wallpaper. (Asset: \(assetID))"
         }
     }
 }

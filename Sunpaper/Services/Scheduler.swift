@@ -16,6 +16,7 @@ class SlotScheduler: ObservableObject {
     private var config: WallpaperConfig
     private var locationProvider: () -> CLLocationCoordinate2D?
     private var timer: Timer?
+    private var prefetchTimer: Timer?
     private var lastAppliedSlotID: UUID?
 
     // MARK: - Init
@@ -35,6 +36,8 @@ class SlotScheduler: ObservableObject {
     func stop() {
         timer?.invalidate()
         timer = nil
+        prefetchTimer?.invalidate()
+        prefetchTimer = nil
     }
 
     func updateConfig(_ newConfig: WallpaperConfig) {
@@ -163,6 +166,7 @@ class SlotScheduler: ObservableObject {
 
     private func scheduleNextUpdate() {
         timer?.invalidate()
+        prefetchTimer?.invalidate()
 
         guard config.enableSolarTracking else { return }
 
@@ -190,6 +194,9 @@ class SlotScheduler: ObservableObject {
                 self?.updateNow()
                 self?.scheduleNextUpdate()
             }
+
+            // Prefetch aerial 5 min before transition
+            schedulePrefetch(before: next.date)
         } else {
             // No more transitions today, schedule for tomorrow morning
             let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Date())!
@@ -219,6 +226,90 @@ class SlotScheduler: ObservableObject {
             timer = Timer.scheduledTimer(withTimeInterval: max(1, delay), repeats: false) { [weak self] _ in
                 self?.updateNow()
                 self?.scheduleNextUpdate()
+            }
+
+            // Prefetch aerial 5 min before tomorrow's transition
+            schedulePrefetch(before: firstTime)
+        }
+    }
+
+    /// Schedule a prefetch 5 minutes before a transition to download missing aerials
+    private func schedulePrefetch(before transitionDate: Date) {
+        let prefetchDelay = transitionDate.timeIntervalSinceNow - 300  // 5 min before
+
+        if prefetchDelay > 0 {
+            prefetchTimer = Timer.scheduledTimer(withTimeInterval: prefetchDelay, repeats: false) { [weak self] _ in
+                self?.prefetchUpcoming()
+            }
+            #if DEBUG
+            print("[Scheduler] Prefetch scheduled in \(Int(prefetchDelay / 60)) min")
+            #endif
+        } else if transitionDate.timeIntervalSinceNow > 0 {
+            // Less than 5 min until transition, prefetch immediately
+            prefetchUpcoming()
+        }
+    }
+
+    /// Check if upcoming wallpaper aerials are downloaded, download if missing
+    private func prefetchUpcoming() {
+        guard let location = locationProvider() else { return }
+        let sunTimes = SunCalculator.calculate(for: location)
+
+        // Collect all asset IDs needed at the next transition
+        var assetIDs: Set<String> = []
+
+        if config.displayMode == .allDisplays {
+            if let next = config.nextTransition(sunTimes: sunTimes) {
+                if case .builtIn(let assetID) = next.slot.source {
+                    assetIDs.insert(assetID)
+                }
+            }
+        } else {
+            // Per-display: check each display's next upcoming slot
+            let displays = DisplayManager.shared.getDisplays()
+            for display in displays {
+                let displaySlots = config.slots(for: display.uuid)
+                let sorted = displaySlots
+                    .filter { $0.isEnabled }
+                    .sorted { $0.resolvedTime(sunTimes: sunTimes) < $1.resolvedTime(sunTimes: sunTimes) }
+                let now = Date()
+                for slot in sorted {
+                    if slot.resolvedTime(sunTimes: sunTimes) > now {
+                        if case .builtIn(let assetID) = slot.source {
+                            assetIDs.insert(assetID)
+                        }
+                        break
+                    }
+                }
+            }
+        }
+
+        // Download any missing aerials
+        let missing = assetIDs.filter { !WallpaperService.shared.isAerialDownloaded(assetID: $0) }
+        guard !missing.isEmpty else { return }
+
+        #if DEBUG
+        print("[Scheduler] Prefetching \(missing.count) missing aerial(s)")
+        #endif
+
+        Task { @MainActor in
+            for assetID in missing {
+                guard let asset = AerialCatalog.shared.asset(for: assetID),
+                      let urlString = asset.videoURL,
+                      let url = URL(string: urlString) else {
+                    #if DEBUG
+                    print("[Scheduler] No download URL for aerial \(assetID)")
+                    #endif
+                    continue
+                }
+
+                do {
+                    try await WallpaperService.shared.downloadAerial(assetID: assetID, from: url)
+                } catch {
+                    #if DEBUG
+                    print("[Scheduler] Prefetch failed for \(assetID): \(error)")
+                    #endif
+                }
             }
         }
     }
