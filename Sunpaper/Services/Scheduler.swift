@@ -64,20 +64,50 @@ class SlotScheduler: ObservableObject {
     }
 
     /// Apply a specific wallpaper immediately (for preview/manual override)
+    /// Downloads the aerial first if missing from disk.
     func applyWallpaper(source: WallpaperSource, displayUUID: String? = nil) {
-        do {
-            switch source {
-            case .builtIn(let assetID):
-                try WallpaperService.shared.setWallpaper(assetID: assetID, displayUUID: displayUUID)
-            case .custom(let path):
-                try WallpaperService.shared.setCustomWallpaper(path: path)
-            case .none:
-                return
+        switch source {
+        case .builtIn(let assetID):
+            if WallpaperService.shared.isAerialDownloaded(assetID: assetID) {
+                applyBuiltIn(assetID: assetID, displayUUID: displayUUID)
+            } else {
+                // Download then apply
+                Task { @MainActor in
+                    guard let asset = AerialCatalog.shared.asset(for: assetID),
+                          let urlString = asset.videoURL,
+                          let url = URL(string: urlString) else {
+                        lastError = "No download URL for aerial \(assetID)"
+                        return
+                    }
+
+                    do {
+                        try await WallpaperService.shared.downloadAerial(assetID: assetID, from: url)
+                        self.applyBuiltIn(assetID: assetID, displayUUID: displayUUID)
+                    } catch {
+                        self.lastError = "Download failed: \(error.localizedDescription)"
+                    }
+                }
             }
+        case .custom(let path):
+            do {
+                try WallpaperService.shared.setCustomWallpaper(path: path)
+            } catch {
+                lastError = "Failed to set wallpaper: \(error.localizedDescription)"
+            }
+        case .none:
+            return
+        }
+    }
+
+    private func applyBuiltIn(assetID: String, displayUUID: String?) {
+        do {
+            try WallpaperService.shared.setWallpaper(assetID: assetID, displayUUID: displayUUID)
+            lastError = nil
             #if DEBUG
-            print("[Scheduler] Applied wallpaper: \(source.displayName)")
+            print("[Scheduler] Applied wallpaper: \(assetID)")
             #endif
         } catch {
+            lastError = "Failed to set wallpaper: \(error.localizedDescription)"
             #if DEBUG
             print("[Scheduler] Failed to apply wallpaper: \(error)")
             #endif
