@@ -1,5 +1,9 @@
 # Sunpaper - Wallpaper Internals
 
+## Scope
+
+Sunpaper changes Apple aerial wallpapers by directly mutating macOS wallpaper state in `Index.plist` and restarting the wallpaper processes that cache it. This is private macOS behavior, not an Apple-supported wallpaper API. The notes below document the current integration contract Sunpaper relies on so release, QA, and maintenance work can preserve it deliberately.
+
 ## How macOS Aerial Video Wallpaper Changing Works
 
 ### The Index.plist Structure
@@ -9,7 +13,7 @@ The wallpaper configuration lives at:
 ~/Library/Application Support/com.apple.wallpaper/Store/Index.plist
 ```
 
-**CRITICAL**: This plist has THREE different modes that use DIFFERENT keypaths:
+**CRITICAL**: This plist has THREE different modes that use DIFFERENT keypaths. Before writing a wallpaper choice, preserve the mode-specific paths described here unless the app is intentionally repairing an unsupported mode.
 
 #### Mode 1: "linked" (all displays same wallpaper)
 ```
@@ -51,13 +55,15 @@ The app detects this and forces the plist back to "linked" mode before making ch
    base64_config = base64.b64encode(binary).decode()
    ```
 
-3. **Update the plist** using plutil:
+3. **Update the plist** using plutil. This linked-mode example writes both the active linked choice and the system default linked choice:
    ```bash
    plutil -replace "AllSpacesAndDisplays.Linked.Content.Choices.0.Configuration" \
      -data "$BASE64_CONFIG" "$PLIST_PATH"
    plutil -replace "SystemDefault.Linked.Content.Choices.0.Configuration" \
      -data "$BASE64_CONFIG" "$PLIST_PATH"
    ```
+
+   In individual mode, write the same configuration to each target display's `Displays.<UUID>.Desktop.Content.Choices.0.Configuration` path instead of the linked paths.
 
 4. **Kill WallpaperAgent AGAIN to force reload** (critical - it won't pick up changes otherwise):
    ```bash
@@ -79,7 +85,7 @@ Night:   CF6347E2-4F81-4410-8892-4830991B6C5A
 
 1. **Using wrong keypaths**: If plist is in "linked" mode but you write to `Desktop` paths, nothing happens (keys don't exist).
 
-2. **Killing processes AFTER modifying plist**: The processes write their cached state on exit, overwriting your changes.
+2. **Killing processes AFTER modifying plist**: The processes write their cached state on exit, overwriting your changes. Preserve the kill-before-write and kill-after-write ordering.
 
 3. **Only killing WallpaperAgent**: The `WallpaperAerialsExtension` also caches state. Kill both BEFORE modifying.
 
