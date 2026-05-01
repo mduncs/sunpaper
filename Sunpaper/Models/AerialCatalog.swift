@@ -40,6 +40,11 @@ struct AerialAsset: Identifiable, Codable, Hashable {
         guard let urlString = previewImage, !urlString.isEmpty else { return nil }
         return URL(string: urlString)
     }
+
+    var downloadURL: URL? {
+        guard let urlString = videoURL, !urlString.isEmpty else { return nil }
+        return URL(string: urlString)
+    }
 }
 
 struct AerialSubcategory: Identifiable, Codable, Hashable {
@@ -100,6 +105,57 @@ struct EntriesFile: Codable {
     let categories: [AerialCategory]?
 }
 
+enum AerialCatalogLoadState: Equatable {
+    case loading
+    case loaded(assetCount: Int, categoryCount: Int)
+    case missingManifest(URL)
+    case malformedManifest(URL, reason: String)
+    case noTopLevelAssets(URL)
+
+    var title: String {
+        switch self {
+        case .loading:
+            return "Loading Aerials"
+        case .loaded:
+            return "Aerials Loaded"
+        case .missingManifest:
+            return "Apple Aerial Catalog Not Found"
+        case .malformedManifest:
+            return "Apple Aerial Catalog Cannot Be Read"
+        case .noTopLevelAssets:
+            return "No Aerials Available"
+        }
+    }
+
+    var message: String? {
+        switch self {
+        case .loading, .loaded:
+            return nil
+        case .missingManifest:
+            return "Sunpaper could not find Apple's local aerial manifest. Open System Settings > Wallpaper and download an Apple aerial collection, then reload the catalog."
+        case .malformedManifest(_, let reason):
+            return "Sunpaper found Apple's local aerial manifest, but could not read it. \(reason)"
+        case .noTopLevelAssets:
+            return "Sunpaper found Apple's local aerial manifest, but it does not list any top-level aerial wallpapers for the picker."
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .loading:
+            return "hourglass"
+        case .loaded:
+            return "photo.on.rectangle"
+        case .missingManifest:
+            return "folder.badge.questionmark"
+        case .malformedManifest:
+            return "doc.badge.exclamationmark"
+        case .noTopLevelAssets:
+            return "photo.stack"
+        }
+    }
+}
+
 // MARK: - Aerial Catalog Service
 
 @MainActor
@@ -110,6 +166,7 @@ class AerialCatalog: ObservableObject {
     @Published private(set) var categories: [AerialCategory] = []
     @Published private(set) var isLoaded = false
     @Published private(set) var error: String?
+    @Published private(set) var loadState: AerialCatalogLoadState = .loading
 
     private var entriesURL: URL {
         // macOS stores aerial wallpaper manifest in user's Application Support
@@ -127,9 +184,15 @@ class AerialCatalog: ObservableObject {
 
     func loadCatalog() {
         let path = entriesURL.path
+        assets = []
+        categories = []
+        isLoaded = false
+        error = nil
+        loadState = .loading
 
         guard FileManager.default.fileExists(atPath: path) else {
-            error = "Aerial entries.json not found. Make sure you have aerial wallpapers downloaded in System Settings."
+            loadState = .missingManifest(entriesURL)
+            error = loadState.message
             #if DEBUG
             print("[AerialCatalog] entries.json not found at: \(path)")
             #endif
@@ -147,16 +210,40 @@ class AerialCatalog: ObservableObject {
 
             categories = (entries.categories ?? []).sorted { ($0.preferredOrder ?? 999) < ($1.preferredOrder ?? 999) }
             isLoaded = true
+            loadState = assets.isEmpty
+                ? .noTopLevelAssets(entriesURL)
+                : .loaded(assetCount: assets.count, categoryCount: categories.count)
 
             #if DEBUG
             print("[AerialCatalog] Loaded \(assets.count) assets, \(categories.count) categories")
             #endif
         } catch {
-            self.error = "Failed to parse entries.json: \(error.localizedDescription)"
+            loadState = .malformedManifest(entriesURL, reason: Self.catalogReadFailureMessage(for: error))
+            self.error = loadState.message
             #if DEBUG
             print("[AerialCatalog] Error: \(error)")
             #endif
         }
+    }
+
+    private static func catalogReadFailureMessage(for error: Error) -> String {
+        switch error {
+        case DecodingError.dataCorrupted(let context):
+            return "The manifest data is corrupted at \(codingPathDescription(context.codingPath))."
+        case DecodingError.keyNotFound(let key, let context):
+            return "The manifest is missing '\(key.stringValue)' at \(codingPathDescription(context.codingPath))."
+        case DecodingError.typeMismatch(_, let context):
+            return "The manifest contains an unexpected value at \(codingPathDescription(context.codingPath))."
+        case DecodingError.valueNotFound(_, let context):
+            return "The manifest is missing a value at \(codingPathDescription(context.codingPath))."
+        default:
+            return error.localizedDescription
+        }
+    }
+
+    private static func codingPathDescription(_ path: [CodingKey]) -> String {
+        let joinedPath = path.map(\.stringValue).filter { !$0.isEmpty }.joined(separator: ".")
+        return joinedPath.isEmpty ? "the top level" : joinedPath
     }
 
     func asset(for id: String) -> AerialAsset? {
@@ -195,6 +282,8 @@ actor ThumbnailCache {
     static let shared = ThumbnailCache()
 
     private var cache: [URL: NSImage] = [:]
+    private var accessOrder: [URL] = []
+    private let maximumMemoryEntries = 96
     private let cacheDirectory: URL
 
     init() {
@@ -207,13 +296,14 @@ actor ThumbnailCache {
     func thumbnail(for url: URL) async -> NSImage? {
         // Check memory cache
         if let cached = cache[url] {
+            markAccessed(url)
             return cached
         }
 
         // Check disk cache
         let diskPath = cacheDirectory.appendingPathComponent(url.lastPathComponent)
         if let diskImage = NSImage(contentsOf: diskPath) {
-            cache[url] = diskImage
+            store(diskImage, for: url)
             return diskImage
         }
 
@@ -225,8 +315,8 @@ actor ThumbnailCache {
             // Save to disk cache
             try? data.write(to: diskPath)
 
-            // Save to memory cache
-            cache[url] = image
+            // Keep disk cache in the system cache directory and bound the in-memory cache.
+            store(image, for: url)
 
             return image
         } catch {
@@ -236,48 +326,125 @@ actor ThumbnailCache {
             return nil
         }
     }
+
+    private func store(_ image: NSImage, for url: URL) {
+        cache[url] = image
+        markAccessed(url)
+        trimMemoryCacheIfNeeded()
+    }
+
+    private func markAccessed(_ url: URL) {
+        accessOrder.removeAll { $0 == url }
+        accessOrder.append(url)
+    }
+
+    private func trimMemoryCacheIfNeeded() {
+        while cache.count > maximumMemoryEntries, let oldestURL = accessOrder.first {
+            accessOrder.removeFirst()
+            cache[oldestURL] = nil
+        }
+    }
 }
 
 // MARK: - Async Thumbnail View
+
+enum ThumbnailUnavailableReason: Equatable {
+    case missingURL
+    case loadFailed
+
+    var title: String {
+        switch self {
+        case .missingURL:
+            return "No Preview"
+        case .loadFailed:
+            return "Preview Unavailable"
+        }
+    }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .missingURL:
+            return "No preview thumbnail is available."
+        case .loadFailed:
+            return "The preview thumbnail could not be loaded."
+        }
+    }
+}
+
+private enum ThumbnailLoadState {
+    case idle
+    case loading
+    case loaded(NSImage)
+    case unavailable(ThumbnailUnavailableReason)
+}
 
 struct AsyncThumbnail: View {
     let url: URL?
     let size: CGSize
 
-    @State private var image: NSImage?
-    @State private var isLoading = false
+    @State private var loadState: ThumbnailLoadState = .idle
 
     var body: some View {
         Group {
-            if let image = image {
+            switch loadState {
+            case .loaded(let image):
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-            } else {
-                Rectangle()
-                    .fill(.quaternary)
-                    .overlay {
-                        if isLoading {
-                            ProgressView()
-                                .scaleEffect(0.5)
-                        } else {
-                            Image(systemName: "photo")
-                                .foregroundStyle(.tertiary)
+                    .accessibilityLabel("Preview thumbnail")
+            case .loading:
+                placeholder {
+                    ProgressView()
+                        .scaleEffect(0.5)
+                }
+                .accessibilityLabel("Loading preview thumbnail")
+            case .idle:
+                placeholder {
+                    Image(systemName: "photo")
+                        .foregroundStyle(.tertiary)
+                }
+                .accessibilityLabel("Preview thumbnail")
+            case .unavailable(let reason):
+                placeholder {
+                    VStack(spacing: 4) {
+                        Image(systemName: "photo")
+                            .foregroundStyle(.tertiary)
+                        if size.width >= 80 {
+                            Text(reason.title)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
                         }
                     }
+                }
+                .accessibilityLabel(reason.accessibilityLabel)
             }
         }
         .frame(width: size.width, height: size.height)
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .task(id: url) {
-            await loadImage()
+            await loadImage(from: url)
         }
     }
 
-    private func loadImage() async {
-        guard let url = url, image == nil else { return }
-        isLoading = true
-        image = await ThumbnailCache.shared.thumbnail(for: url)
-        isLoading = false
+    private func placeholder<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        Rectangle()
+            .fill(.quaternary)
+            .overlay(content: content)
+    }
+
+    private func loadImage(from url: URL?) async {
+        guard let url else {
+            loadState = .unavailable(.missingURL)
+            return
+        }
+
+        loadState = .loading
+        if let image = await ThumbnailCache.shared.thumbnail(for: url) {
+            loadState = .loaded(image)
+        } else {
+            loadState = .unavailable(.loadFailed)
+        }
     }
 }

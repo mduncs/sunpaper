@@ -1,6 +1,54 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+private enum AerialDownloadState: Equatable {
+    case downloaded
+    case downloadable
+    case unavailable
+
+    var title: String {
+        switch self {
+        case .downloaded:
+            return "Downloaded"
+        case .downloadable:
+            return "Will download"
+        case .unavailable:
+            return "No download URL"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .downloaded:
+            return "checkmark.circle"
+        case .downloadable:
+            return "arrow.down.circle"
+        case .unavailable:
+            return "exclamationmark.triangle"
+        }
+    }
+
+    var foregroundColor: Color {
+        switch self {
+        case .downloaded, .downloadable:
+            return .secondary
+        case .unavailable:
+            return .orange
+        }
+    }
+
+    var accessibilityDescription: String {
+        switch self {
+        case .downloaded:
+            return "The aerial video is downloaded."
+        case .downloadable:
+            return "The aerial video is not downloaded yet, but Sunpaper has a download URL."
+        case .unavailable:
+            return "The aerial video is not downloaded and the catalog does not provide a download URL."
+        }
+    }
+}
+
 // MARK: - Wallpaper Grid Picker
 
 struct WallpaperGridPicker: View {
@@ -11,6 +59,7 @@ struct WallpaperGridPicker: View {
     @StateObject private var catalog = AerialCatalog.shared
     @State private var searchText = ""
     @State private var selectedTab = 0
+    @State private var customFileError: String?
 
     private var selectedAssetID: String? {
         if case .builtIn(let id) = selectedSource { return id }
@@ -29,11 +78,12 @@ struct WallpaperGridPicker: View {
             Divider()
 
             // Tab picker
-            Picker("", selection: $selectedTab) {
+            Picker("Wallpaper source", selection: $selectedTab) {
                 Text("Aerials").tag(0)
                 Text("Custom").tag(1)
             }
             .pickerStyle(.segmented)
+            .accessibilityLabel("Wallpaper source")
             .padding(.horizontal)
             .padding(.vertical, 8)
 
@@ -47,15 +97,33 @@ struct WallpaperGridPicker: View {
         .frame(width: 560, height: 520)
     }
 
+    @ViewBuilder
     private var aerialGrid: some View {
-        Group {
-            if catalog.isLoaded {
+        switch catalog.loadState {
+        case .loading:
+            ProgressView("Loading aerials...")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityLabel("Loading Apple aerial wallpapers")
+
+        case .loaded:
+            if filteredAssets.isEmpty {
+                emptyState(
+                    title: "No Aerials Found",
+                    systemImage: "magnifyingglass",
+                    message: "No Apple aerial wallpapers match \"\(searchText)\".",
+                    actionTitle: "Clear Search",
+                    actionHint: "Clears the search field."
+                ) {
+                    searchText = ""
+                }
+            } else {
                 ScrollView {
                     LazyVGrid(columns: columns, spacing: 12) {
                         ForEach(filteredAssets) { asset in
                             WallpaperThumbnailCell(
                                 asset: asset,
                                 isSelected: selectedAssetID == asset.id,
+                                downloadState: downloadState(for: asset),
                                 onSelect: {
                                     let source = WallpaperSource.builtIn(assetID: asset.id)
                                     selectedSource = source
@@ -67,17 +135,63 @@ struct WallpaperGridPicker: View {
                     }
                     .padding()
                 }
-            } else if let error = catalog.error {
-                ContentUnavailableView(
-                    "Unable to Load",
-                    systemImage: "exclamationmark.triangle",
-                    description: Text(error)
-                )
-            } else {
-                ProgressView("Loading aerials...")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityIdentifier("aerialWallpaperGrid")
+            }
+
+        case .missingManifest, .malformedManifest, .noTopLevelAssets:
+            emptyState(
+                title: catalog.loadState.title,
+                systemImage: catalog.loadState.systemImage,
+                message: catalog.loadState.message ?? "Apple aerial wallpapers are not available.",
+                actionTitle: "Reload Catalog",
+                actionHint: "Attempts to update the aerial wallpaper list."
+            ) {
+                catalog.loadCatalog()
             }
         }
+    }
+
+    private func emptyState(
+        title: String,
+        systemImage: String,
+        message: String,
+        actionTitle: String? = nil,
+        actionHint: String? = nil,
+        action: (() -> Void)? = nil
+    ) -> some View {
+        VStack(spacing: 14) {
+            Image(systemName: systemImage)
+                .font(.system(size: 36))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+
+            Text(title)
+                .font(.headline)
+
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 420)
+
+            if let actionTitle, let action {
+                Button(actionTitle, action: action)
+                    .buttonStyle(.bordered)
+                    .accessibilityHint(actionHint ?? "")
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func downloadState(for asset: AerialAsset) -> AerialDownloadState {
+        if WallpaperService.shared.isAerialDownloaded(assetID: asset.id) {
+            return .downloaded
+        }
+
+        return asset.downloadURL == nil ? .unavailable : .downloadable
     }
 
     private var customWallpaperSection: some View {
@@ -87,13 +201,16 @@ struct WallpaperGridPicker: View {
             Image(systemName: "photo.on.rectangle.angled")
                 .font(.system(size: 48))
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
 
             Text("Custom Wallpapers")
                 .font(.headline)
 
-            Text("Choose your own image or video file")
+            Text("Choose a static image file. Custom video wallpapers are not supported yet.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 380)
 
             Button {
                 chooseCustomFile()
@@ -101,24 +218,43 @@ struct WallpaperGridPicker: View {
                 Label("Choose File...", systemImage: "folder")
             }
             .buttonStyle(.bordered)
+            .accessibilityHint("Opens a file picker for a custom static wallpaper image.")
 
-            Text("Supported: HEIC, JPG, PNG, MOV, MP4")
+            Text("Static images apply directly. MOV and MP4 files are not supported.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+
+            if let customFileError {
+                Label(customFileError, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 380)
+                    .accessibilityLabel("Custom wallpaper error. \(customFileError)")
+            }
 
             Spacer()
         }
+        .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func chooseCustomFile() {
+        customFileError = nil
+
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.image, .movie, .heic, .jpeg, .png]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        panel.message = "Choose a wallpaper image or video"
+        panel.message = "Choose a wallpaper image. Custom videos are not supported yet."
 
         if panel.runModal() == .OK, let url = panel.url {
+            guard !isMovieFile(url) else {
+                customFileError = "Custom video wallpapers are not supported yet. Choose a static image instead."
+                return
+            }
+
             // Copy to app support directory for persistence
             do {
                 let destURL = try copyToAppSupport(url)
@@ -127,11 +263,25 @@ struct WallpaperGridPicker: View {
                 onSelect(source)
                 dismiss()
             } catch {
+                customFileError = "Could not copy \(url.lastPathComponent): \(error.localizedDescription)"
                 #if DEBUG
                 print("[WallpaperGridPicker] Failed to copy file: \(error)")
                 #endif
             }
         }
+    }
+
+    private func isMovieFile(_ url: URL) -> Bool {
+        if let resourceValues = try? url.resourceValues(forKeys: [.contentTypeKey]),
+           let contentType = resourceValues.contentType {
+            return contentType.conforms(to: .movie)
+        }
+
+        if let contentType = UTType(filenameExtension: url.pathExtension) {
+            return contentType.conforms(to: .movie)
+        }
+
+        return ["mov", "mp4", "m4v"].contains(url.pathExtension.lowercased())
     }
 
     private func copyToAppSupport(_ sourceURL: URL) throws -> URL {
@@ -169,8 +319,10 @@ struct WallpaperGridPicker: View {
             HStack {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
-                TextField("Search", text: $searchText)
+                    .accessibilityHidden(true)
+                TextField("Search Aerials", text: $searchText)
                     .textFieldStyle(.plain)
+                    .accessibilityLabel("Search aerial wallpapers")
                 if !searchText.isEmpty {
                     Button {
                         searchText = ""
@@ -179,6 +331,8 @@ struct WallpaperGridPicker: View {
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Clear search")
+                    .accessibilityHint("Shows all aerial wallpapers.")
                 }
             }
             .padding(6)
@@ -189,6 +343,7 @@ struct WallpaperGridPicker: View {
                 dismiss()
             }
             .buttonStyle(.bordered)
+            .keyboardShortcut(.cancelAction)
         }
         .padding()
     }
@@ -205,9 +360,10 @@ struct WallpaperGridPicker: View {
 
 // MARK: - Thumbnail Cell
 
-struct WallpaperThumbnailCell: View {
+private struct WallpaperThumbnailCell: View {
     let asset: AerialAsset
     let isSelected: Bool
+    let downloadState: AerialDownloadState
     let onSelect: () -> Void
 
     @State private var isHovered = false
@@ -228,6 +384,7 @@ struct WallpaperThumbnailCell: View {
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundStyle(.white, Color.accentColor)
                                 .padding(4)
+                                .accessibilityHidden(true)
                         }
                     }
 
@@ -237,15 +394,29 @@ struct WallpaperThumbnailCell: View {
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
                     .foregroundStyle(isSelected ? .primary : .secondary)
+                    .frame(height: 32)
+
+                Label(downloadState.title, systemImage: downloadState.systemImage)
+                    .font(.caption2)
+                    .foregroundStyle(downloadState.foregroundColor)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .frame(height: 14)
+                    .accessibilityLabel(downloadState.accessibilityDescription)
             }
+            .frame(maxWidth: .infinity, minHeight: 138)
             .padding(6)
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(isSelected ? Color.accentColor.opacity(0.1) :
                           isHovered ? Color.primary.opacity(0.05) : Color.clear)
             )
+            .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(isSelected ? "Selected" : "Not selected")
+        .accessibilityHint("Selects \(asset.displayName). \(downloadState.accessibilityDescription)")
         .onHover { hovering in
             isHovered = hovering
         }
@@ -271,6 +442,7 @@ struct WallpaperButton: View {
                     RoundedRectangle(cornerRadius: 3)
                         .fill(.quaternary)
                         .frame(width: 32, height: 20)
+                        .accessibilityHidden(true)
                 }
 
                 // Name
@@ -282,12 +454,15 @@ struct WallpaperButton: View {
                 Image(systemName: "chevron.down")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Choose wallpaper. Current selection: \(displayName)")
+        .accessibilityHint("Opens the wallpaper picker.")
     }
 
     private var displayName: String {
@@ -295,7 +470,9 @@ struct WallpaperButton: View {
         case .none:
             return "None"
         case .builtIn(let assetID):
-            return catalog.asset(for: assetID)?.displayName ?? "Unknown"
+            return catalog.asset(for: assetID)?.displayName
+                ?? BuiltInWallpapers.name(for: assetID)
+                ?? "Unknown Aerial"
         case .custom(let path):
             return URL(fileURLWithPath: path).lastPathComponent
         }
