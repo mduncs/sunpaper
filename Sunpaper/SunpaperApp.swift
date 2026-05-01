@@ -46,6 +46,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         scheduler?.todaySchedule ?? []
     }
 
+    var isDownloading: Bool {
+        scheduler?.isDownloading ?? false
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard continueLaunchingAfterSingletonCheck() else { return }
 
@@ -77,14 +81,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func loadConfig() {
-        if let data = UserDefaults.standard.data(forKey: "wallpaperConfig"),
-           let loaded = try? JSONDecoder().decode(WallpaperConfig.self, from: data) {
-            config = loaded
+        let data = UserDefaults.standard.data(forKey: WallpaperConfig.userDefaultsKey)
+        config = WallpaperConfig.decodeCompatibleOrDefault(from: data)
 
-            // Use stored location if available
-            if let lat = config.latitude, let lon = config.longitude {
-                currentLocation = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-            }
+        // Use stored location if available
+        if let lat = config.latitude, let lon = config.longitude {
+            currentLocation = CLLocationCoordinate2D(latitude: lat, longitude: lon)
         }
     }
 
@@ -117,6 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             nextTransition: nextTransition,
             todaySchedule: todaySchedule,
             lastError: scheduler?.lastError,
+            isDownloading: isDownloading,
             onApplySlot: { [weak self] slot in
                 Task { @MainActor [weak self] in
                     self?.applySlot(slot)
@@ -168,7 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         scheduler = newScheduler
         newScheduler.start()
 
-        observeSchedulerDownloadState(newScheduler)
+        observeSchedulerState(newScheduler)
     }
 
     private func stopScheduler() {
@@ -176,12 +179,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cancellables.removeAll()
     }
 
-    private func observeSchedulerDownloadState(_ scheduler: SlotScheduler) {
+    private func observeSchedulerState(_ scheduler: SlotScheduler) {
         scheduler.$isDownloading
             .receive(on: DispatchQueue.main)
             .sink { [weak self] downloading in
                 Task { @MainActor [weak self] in
                     self?.setStatusIcon(isDownloading: downloading)
+                    self?.updatePopoverContentIfVisible()
+                }
+            }
+            .store(in: &cancellables)
+
+        scheduler.$currentSlot
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.updatePopoverContentIfVisible()
+                }
+            }
+            .store(in: &cancellables)
+
+        scheduler.$nextTransition
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.updatePopoverContentIfVisible()
+                }
+            }
+            .store(in: &cancellables)
+
+        scheduler.$todaySchedule
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.updatePopoverContentIfVisible()
+                }
+            }
+            .store(in: &cancellables)
+
+        scheduler.$lastError
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.updatePopoverContentIfVisible()
                 }
             }
             .store(in: &cancellables)
@@ -190,7 +230,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setStatusIcon(isDownloading: Bool) {
         guard let button = statusItem?.button else { return }
         let icon = isDownloading ? "icloud.and.arrow.down.fill" : "sun.horizon.fill"
-        button.image = NSImage(systemSymbolName: icon, accessibilityDescription: "Sunpaper")
+        let description = isDownloading ? "Sunpaper is downloading a wallpaper" : "Sunpaper"
+        button.image = NSImage(systemSymbolName: icon, accessibilityDescription: description)
+    }
+
+    private func updatePopoverContentIfVisible() {
+        guard popover?.isShown == true else { return }
+        updatePopoverContent()
     }
 
     // MARK: - Actions

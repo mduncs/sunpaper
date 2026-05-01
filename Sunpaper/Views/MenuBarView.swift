@@ -5,134 +5,140 @@ struct MenuBarView: View {
     let nextTransition: (slot: TimeSlot, date: Date)?
     let todaySchedule: [(slot: TimeSlot, time: Date)]
     let lastError: String?
+    let isDownloading: Bool
     let onApplySlot: (TimeSlot) -> Void
     let onOpenSettings: () -> Void
     let onQuit: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 0) {
             statusSummary
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+                .padding(.bottom, 8)
 
             if let error = lastError {
-                ErrorStatusView(error: error)
+                ErrorStatusView(error: error, onOpenSettings: onOpenSettings)
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 8)
             }
 
             Divider()
-                .padding(.vertical, 2)
 
-            Text("Today")
-                .font(.caption)
-                .fontWeight(.semibold)
-                .foregroundStyle(.secondary)
-                .accessibilityAddTraits(.isHeader)
+            scheduleSection
+                .padding(.horizontal, 8)
+                .padding(.vertical, 8)
 
-            if !todaySchedule.isEmpty {
-                scheduleList
-                    .accessibilityLabel("Today's schedule")
-            } else {
-                HStack(spacing: 6) {
-                    Image(systemName: "calendar.badge.exclamationmark")
-                        .foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
+            Divider()
 
-                    Text("No schedule available")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+            commandSection
+                .padding(.horizontal, 8)
                 .padding(.vertical, 6)
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("No schedule available")
-                .accessibilityHint("Open settings to configure scheduled wallpaper changes.")
-            }
-
-            Divider()
-                .padding(.vertical, 2)
-
-            Button(action: onOpenSettings) {
-                HStack(spacing: 8) {
-                    Image(systemName: "gearshape")
-                        .frame(width: 16)
-                        .accessibilityHidden(true)
-
-                    Text("Settings...")
-                    Spacer(minLength: 8)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(MenuButtonStyle())
-            .accessibilityLabel("Open Settings")
-            .accessibilityHint("Opens Sunpaper settings.")
-
-            Divider()
-                .padding(.vertical, 2)
-
-            Button(action: onQuit) {
-                HStack(spacing: 8) {
-                    Image(systemName: "power")
-                        .frame(width: 16)
-                        .accessibilityHidden(true)
-
-                    Text("Quit Sunpaper")
-                    Spacer(minLength: 8)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(MenuButtonStyle())
-            .accessibilityLabel("Quit Sunpaper")
-            .accessibilityHint("Exits Sunpaper.")
         }
-        .padding(12)
         .frame(width: 280)
     }
 
     private var statusSummary: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .center, spacing: 8) {
-                Label("Sunpaper", systemImage: "sun.horizon.fill")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .labelStyle(.titleAndIcon)
+                Image(systemName: currentSlot.map(slotIcon) ?? "clock")
+                    .font(.title3)
+                    .foregroundStyle(currentSlot.map(slotColor) ?? .secondary)
+                    .frame(width: 22)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Current")
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+
+                    Text(currentSlot?.name ?? "No active slot")
+                        .font(.headline)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+                }
 
                 Spacer(minLength: 8)
 
-                StatusBadge(
-                    text: statusText,
-                    systemImage: statusIcon,
-                    color: statusColor
-                )
+                StatusBadge(status: popoverStatus)
             }
 
-            HStack(spacing: 6) {
-                Image(systemName: currentSlot.map(slotIcon) ?? "clock")
-                    .font(.subheadline)
-                    .foregroundStyle(currentSlot.map(slotColor) ?? .secondary)
-                    .frame(width: 18)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: "arrow.forward.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22)
                     .accessibilityHidden(true)
 
-                Text(currentSlot?.name ?? "No active slot")
-                    .font(.headline)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                Text(nextTransitionText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-
-            Text(nextTransitionText)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Sunpaper status")
         .accessibilityValue(statusAccessibilityValue)
     }
 
+    private var scheduleSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Today")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                    .accessibilityAddTraits(.isHeader)
+
+                Spacer(minLength: 8)
+
+                if !todaySchedule.isEmpty {
+                    Text("\(todaySchedule.count) slots")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
+                }
+            }
+
+            if !todaySchedule.isEmpty {
+                scheduleList
+                    .accessibilityLabel("Today's schedule")
+            } else {
+                EmptyScheduleView(onOpenSettings: onOpenSettings)
+            }
+        }
+    }
+
+    private var commandSection: some View {
+        VStack(spacing: 2) {
+            MenuCommandButton(
+                title: "Settings...",
+                systemImage: "gearshape",
+                accessibilityLabel: "Open Settings",
+                accessibilityHint: "Opens Sunpaper settings.",
+                action: onOpenSettings
+            )
+
+            MenuCommandButton(
+                title: "Quit Sunpaper",
+                systemImage: "power",
+                accessibilityLabel: "Quit Sunpaper",
+                accessibilityHint: "Exits Sunpaper.",
+                action: onQuit
+            )
+        }
+    }
+
     @ViewBuilder
     private var scheduleList: some View {
-        if todaySchedule.count > 5 {
+        if todaySchedule.count > maxVisibleScheduleRows {
             ScrollView {
                 scheduleRows
             }
-            .frame(maxHeight: 142)
+            .frame(maxHeight: scheduleListMaxHeight)
         } else {
             scheduleRows
         }
@@ -151,45 +157,33 @@ struct MenuBarView: View {
         }
     }
 
-    private var statusText: String {
+    private var popoverStatus: MenuBarPopoverStatus {
         if lastError != nil {
-            return "Needs attention"
+            return .attention
+        }
+
+        if isDownloading {
+            return .downloading
         }
 
         if currentSlot == nil || todaySchedule.isEmpty {
-            return "Waiting"
+            return .waiting
         }
 
-        return "Ready"
+        return .ready
     }
 
-    private var statusIcon: String {
-        if lastError != nil {
-            return "exclamationmark.triangle.fill"
-        }
-
-        if currentSlot == nil || todaySchedule.isEmpty {
-            return "clock.fill"
-        }
-
-        return "checkmark.circle.fill"
+    private var maxVisibleScheduleRows: Int {
+        lastError == nil ? 5 : 3
     }
 
-    private var statusColor: Color {
-        if lastError != nil {
-            return .orange
-        }
-
-        if currentSlot == nil || todaySchedule.isEmpty {
-            return .secondary
-        }
-
-        return .green
+    private var scheduleListMaxHeight: CGFloat {
+        CGFloat(maxVisibleScheduleRows * 30)
     }
 
     private var nextTransitionText: String {
         guard let nextTransition else {
-            return "Next: no more transitions today"
+            return "Next: No more transitions today"
         }
 
         return "Next: \(nextTransition.slot.name) at \(formatScheduleTime(nextTransition.date))"
@@ -197,65 +191,167 @@ struct MenuBarView: View {
 
     private var statusAccessibilityValue: String {
         var parts = [
+            "State: \(popoverStatus.title)",
             currentSlot.map { "Current slot: \($0.name)" } ?? "No active slot",
-            nextTransition.map { "Next transition: \($0.slot.name) at \(formatScheduleTime($0.date))" } ?? "No more transitions today",
-            "Status: \(statusText)"
+            nextTransition.map { "Next transition: \($0.slot.name) at \(formatScheduleTime($0.date))" } ?? "No more transitions today"
         ]
 
         if let lastError {
             parts.append("Last issue: \(lastError)")
+        } else if isDownloading {
+            parts.append("A wallpaper download is in progress")
         }
 
         return parts.joined(separator: ". ")
     }
 }
 
+private enum MenuBarPopoverStatus: Equatable {
+    case ready
+    case waiting
+    case downloading
+    case attention
+
+    var title: String {
+        switch self {
+        case .ready:
+            return "Ready"
+        case .waiting:
+            return "Waiting"
+        case .downloading:
+            return "Downloading"
+        case .attention:
+            return "Attention"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .ready:
+            return "checkmark.circle.fill"
+        case .waiting:
+            return "clock.fill"
+        case .downloading:
+            return "arrow.down.circle.fill"
+        case .attention:
+            return "exclamationmark.triangle.fill"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .ready:
+            return .green
+        case .waiting:
+            return .secondary
+        case .downloading:
+            return .accentColor
+        case .attention:
+            return .orange
+        }
+    }
+}
+
 private struct StatusBadge: View {
-    let text: String
-    let systemImage: String
-    let color: Color
+    let status: MenuBarPopoverStatus
 
     var body: some View {
-        Label(text, systemImage: systemImage)
-            .font(.caption2)
-            .fontWeight(.medium)
-            .labelStyle(.titleAndIcon)
-            .foregroundStyle(color)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(color.opacity(0.12), in: Capsule())
-            .accessibilityHidden(true)
+        HStack(spacing: 4) {
+            if status == .downloading {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(status.tint)
+                    .scaleEffect(0.58)
+                    .frame(width: 12, height: 12)
+            } else {
+                Image(systemName: status.systemImage)
+                    .font(.caption2)
+                    .accessibilityHidden(true)
+            }
+
+            Text(status.title)
+        }
+        .font(.caption2)
+        .fontWeight(.medium)
+        .foregroundStyle(status.tint)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(status.tint.opacity(0.12), in: Capsule())
+        .accessibilityHidden(true)
     }
 }
 
 private struct ErrorStatusView: View {
     let error: String
+    let onOpenSettings: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 6) {
+        HStack(alignment: .top, spacing: 7) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.caption)
                 .foregroundStyle(.orange)
                 .frame(width: 16)
                 .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Last issue")
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Needs attention")
                     .font(.caption2)
                     .fontWeight(.semibold)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(.primary)
 
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
+
+                Button(action: onOpenSettings) {
+                    Label("Open Settings", systemImage: "gearshape")
+                }
+                .font(.caption)
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .accessibilityLabel("Open Settings")
+                .accessibilityHint("Opens Sunpaper settings.")
             }
         }
-        .padding(.vertical, 1)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Last issue")
-        .accessibilityValue(error)
+        .padding(8)
+        .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.orange.opacity(0.22), lineWidth: 1)
+        )
+    }
+}
+
+private struct EmptyScheduleView: View {
+    let onOpenSettings: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 7) {
+            Image(systemName: "calendar.badge.exclamationmark")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+                .accessibilityHidden(true)
+
+            Text("No schedule available")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+
+            Spacer(minLength: 8)
+
+            Button("Settings...", action: onOpenSettings)
+                .font(.caption)
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .accessibilityLabel("Open Settings")
+                .accessibilityHint("Configure scheduled wallpaper changes.")
+        }
+        .padding(.horizontal, 6)
+        .frame(height: 30)
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -271,10 +367,10 @@ struct ScheduleSlotButton: View {
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 8) {
+            HStack(spacing: 7) {
                 Text(formatScheduleTime(time))
                     .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(isCurrent ? .primary : .secondary)
+                    .foregroundStyle(.secondary)
                     .frame(width: 52, alignment: .leading)
 
                 Image(systemName: slotIcon(slot))
@@ -288,22 +384,29 @@ struct ScheduleSlotButton: View {
                     .foregroundStyle(isCurrent ? .primary : .secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
+                    .truncationMode(.tail)
 
                 Spacer(minLength: 8)
 
                 if isCurrent {
-                    Text("Now")
+                    Text("Current")
                         .font(.caption2)
                         .fontWeight(.medium)
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 6)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 5)
                         .padding(.vertical, 2)
-                        .background(Color.accentColor, in: Capsule())
+                        .background(Color.secondary.opacity(0.12), in: Capsule())
+                        .accessibilityHidden(true)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .opacity(isHovered ? 0.85 : 0.32)
                         .accessibilityHidden(true)
                 }
             }
             .padding(.horizontal, 8)
-            .padding(.vertical, 5)
+            .frame(height: 28)
             .background(
                 RoundedRectangle(cornerRadius: 4)
                     .fill(isCurrent ? Color.accentColor.opacity(0.1) :
@@ -316,6 +419,7 @@ struct ScheduleSlotButton: View {
         .accessibilityLabel(accessibilityLabel)
         .accessibilityValue(accessibilityValue)
         .accessibilityHint(accessibilityHint)
+        .help(isCurrent ? "Reapply \(slot.name) now" : "Apply \(slot.name) now")
         .onHover { hovering in
             isHovered = hovering
         }
@@ -340,6 +444,47 @@ struct ScheduleSlotButton: View {
             return "No wallpaper assigned"
         default:
             return "Wallpaper: \(slot.source.displayName)"
+        }
+    }
+}
+
+private struct MenuCommandButton: View {
+    let title: String
+    let systemImage: String
+    let accessibilityLabel: String
+    let accessibilityHint: String
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: systemImage)
+                    .font(.subheadline)
+                    .frame(width: 16)
+                    .accessibilityHidden(true)
+
+                Text(title)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.9)
+
+                Spacer(minLength: 8)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .frame(height: 28)
+        .background(
+            RoundedRectangle(cornerRadius: 4)
+                .fill(isHovered ? Color.primary.opacity(0.08) : Color.clear)
+        )
+        .foregroundStyle(.primary)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint(accessibilityHint)
+        .onHover { hovering in
+            isHovered = hovering
         }
     }
 }
@@ -381,24 +526,4 @@ private func slotColor(_ slot: TimeSlot) -> Color {
 
 private func formatScheduleTime(_ date: Date) -> String {
     date.formatted(date: .omitted, time: .shortened)
-}
-
-// Native-feeling menu button style
-struct MenuButtonStyle: ButtonStyle {
-    @State private var isHovered = false
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(configuration.isPressed ? Color.primary.opacity(0.15) :
-                          isHovered ? Color.primary.opacity(0.08) : Color.clear)
-            )
-            .foregroundStyle(.primary)
-            .onHover { hovering in
-                isHovered = hovering
-            }
-    }
 }

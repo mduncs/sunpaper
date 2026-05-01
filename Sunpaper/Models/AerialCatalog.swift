@@ -119,9 +119,9 @@ enum AerialCatalogLoadState: Equatable {
         case .loaded:
             return "Aerials Loaded"
         case .missingManifest:
-            return "Apple Aerial Catalog Not Found"
+            return "Aerial Catalog Not Found"
         case .malformedManifest:
-            return "Apple Aerial Catalog Cannot Be Read"
+            return "Aerial Catalog Cannot Be Read"
         case .noTopLevelAssets:
             return "No Aerials Available"
         }
@@ -132,11 +132,11 @@ enum AerialCatalogLoadState: Equatable {
         case .loading, .loaded:
             return nil
         case .missingManifest:
-            return "Sunpaper could not find Apple's local aerial manifest. Open System Settings > Wallpaper and download an Apple aerial collection, then reload the catalog."
+            return "Sunpaper reads the local aerial catalog that macOS creates after aerial wallpapers are downloaded. Open System Settings > Wallpaper, download an aerial wallpaper, then return here and reload the catalog."
         case .malformedManifest(_, let reason):
-            return "Sunpaper found Apple's local aerial manifest, but could not read it. \(reason)"
+            return "Sunpaper found the local aerial catalog, but could not read it. \(reason) Reload after macOS refreshes the Wallpaper catalog."
         case .noTopLevelAssets:
-            return "Sunpaper found Apple's local aerial manifest, but it does not list any top-level aerial wallpapers for the picker."
+            return "Sunpaper found the local aerial catalog, but it does not list any aerial wallpapers that can be shown here. Download an aerial wallpaper in System Settings > Wallpaper, then reload."
         }
     }
 
