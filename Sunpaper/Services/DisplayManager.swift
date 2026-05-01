@@ -7,6 +7,20 @@ import IOKit.graphics
 final class DisplayManager: Sendable {
 
     struct Display: Identifiable, Equatable, Codable {
+        enum IdentitySource: Equatable {
+            case hardwareDescriptor
+            case displayIDFallback
+
+            var isStableAcrossReboots: Bool {
+                switch self {
+                case .hardwareDescriptor:
+                    return true
+                case .displayIDFallback:
+                    return false
+                }
+            }
+        }
+
         let uuid: String
         let name: String
         let isPrimary: Bool
@@ -14,6 +28,35 @@ final class DisplayManager: Sendable {
         var id: String { uuid }
 
         var displayName: String {
+            Self.displayName(for: name, isPrimary: isPrimary)
+        }
+
+        /// Describes how the persisted display identifier was derived.
+        ///
+        /// Existing user configs store only `uuid`, so this remains a computed
+        /// property and does not alter the Codable shape.
+        var identitySource: IdentitySource {
+            uuid.hasPrefix(Self.displayIDFallbackPrefix) ? .displayIDFallback : .hardwareDescriptor
+        }
+
+        /// False when macOS did not expose vendor/model/serial data and the app
+        /// had to fall back to a display ID that may change after reconnects.
+        var hasStableIdentity: Bool {
+            identitySource.isStableAcrossReboots
+        }
+
+        var identityDescription: String {
+            switch identitySource {
+            case .hardwareDescriptor:
+                return "Hardware descriptor"
+            case .displayIDFallback:
+                return "Temporary display ID"
+            }
+        }
+
+        private static let displayIDFallbackPrefix = "display-"
+
+        private static func displayName(for name: String, isPrimary: Bool) -> String {
             isPrimary ? "\(name) (Primary)" : name
         }
     }
@@ -65,20 +108,21 @@ final class DisplayManager: Sendable {
         }
     }
 
-    /// Get UUID for a display ID
+    /// Get the persisted identifier for a display.
+    ///
+    /// Prefer vendor/model/serial because it is usually stable across reboots
+    /// and reconnects. If macOS does not expose those values, keep the existing
+    /// `display-XXXXXXXX` fallback so existing per-display config remains
+    /// compatible, even though that fallback is not guaranteed to be stable.
     private func getDisplayUUID(displayID: CGDirectDisplayID) -> String? {
-        // Get UUID from vendor/model/serial
         let vendorID = CGDisplayVendorNumber(displayID)
         let modelID = CGDisplayModelNumber(displayID)
         let serialNumber = CGDisplaySerialNumber(displayID)
 
-        // Create a stable UUID-like string from vendor/model/serial
-        // This is more stable than display ID across reboots
         if vendorID != 0 || modelID != 0 || serialNumber != 0 {
             return String(format: "%08X-%08X-%08X", vendorID, modelID, serialNumber)
         }
 
-        // Last resort: use display ID as string (not stable across reboots but better than nothing)
         return String(format: "display-%08X", displayID)
     }
 
@@ -91,8 +135,8 @@ final class DisplayManager: Sendable {
 
         // Try to get name from NSScreen
         for screen in NSScreen.screens {
-            guard let deviceDescription = screen.deviceDescription as? [NSDeviceDescriptionKey: Any],
-                  let screenNumber = deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID,
+            let deviceDescription = screen.deviceDescription
+            guard let screenNumber = deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID,
                   screenNumber == displayID else {
                 continue
             }
