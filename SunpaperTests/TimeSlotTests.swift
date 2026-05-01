@@ -97,6 +97,37 @@ final class TimeSlotTests: XCTestCase {
         XCTAssertEqual(config.slots.count, 4, "Default config should have 4 slots")
     }
 
+    func testDefaultConfigPreservesSlotNamesTriggersAndSources() {
+        let slots = WallpaperConfig.default.slots
+
+        XCTAssertEqual(slots.map(\.name), ["Morning", "Day", "Evening", "Night"])
+        assertSolarTrigger(slots[0].trigger, event: .sunrise, offset: -3600)
+        assertSolarTrigger(slots[1].trigger, event: .sunrise, offset: 3600)
+        assertSolarTrigger(slots[2].trigger, event: .sunset, offset: -3600)
+        assertSolarTrigger(slots[3].trigger, event: .sunset, offset: 3600)
+
+        XCTAssertEqual(slots[0].source.assetID, BuiltInWallpapers.tahoe.morning)
+        XCTAssertEqual(slots[1].source.assetID, BuiltInWallpapers.tahoe.day)
+        XCTAssertEqual(slots[2].source.assetID, BuiltInWallpapers.tahoe.evening)
+        XCTAssertEqual(slots[3].source.assetID, BuiltInWallpapers.tahoe.night)
+    }
+
+    func testBuiltInWallpaperSetsRemainAvailable() {
+        let sets = BuiltInWallpapers.allSets
+
+        XCTAssertEqual(sets.map(\.name), ["Tahoe", "Sequoia"])
+        for set in sets {
+            XCTAssertEqual(set.all.count, 4, "\(set.name) should expose four time-of-day entries")
+            for wallpaper in set.all {
+                XCTAssertFalse(wallpaper.name.isEmpty)
+                XCTAssertNotNil(
+                    UUID(uuidString: wallpaper.assetID),
+                    "\(set.name) \(wallpaper.name) asset ID should remain UUID-shaped"
+                )
+            }
+        }
+    }
+
     func testDefaultConfigSlotsAreSorted() {
         let config = WallpaperConfig.default
         let sunTimes = SunCalculator.calculate(for: chicagoLocation)
@@ -221,5 +252,21 @@ final class TimeSlotTests: XCTestCase {
         let today = calendar.component(.day, from: Date())
 
         XCTAssertEqual(day, today, "Resolved time should be on the same day")
+    }
+
+    private func assertSolarTrigger(
+        _ trigger: Trigger,
+        event expectedEvent: SolarEvent,
+        offset expectedOffset: TimeInterval,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard case .solar(let event, let offset) = trigger else {
+            XCTFail("Expected solar trigger", file: file, line: line)
+            return
+        }
+
+        XCTAssertEqual(event, expectedEvent, file: file, line: line)
+        XCTAssertEqual(offset, expectedOffset, accuracy: 0.1, file: file, line: line)
     }
 }

@@ -3,6 +3,8 @@ import AppKit
 @testable import Sunpaper
 
 final class WallpaperServiceTests: XCTestCase {
+    // These tests must not call setWallpaper(assetID:) because that mutates the
+    // user's real macOS wallpaper Index.plist.
 
     // MARK: - WallpaperError Description Tests
 
@@ -122,6 +124,21 @@ final class WallpaperServiceTests: XCTestCase {
         )
     }
 
+    func testDownloadFailedErrorDescription() {
+        let assetID = "4C108785-A7BA-422E-9C79-B0129F1D5550"
+        let error = WallpaperError.downloadFailed(assetID: assetID)
+
+        XCTAssertNotNil(error.errorDescription, "Error should have description")
+        XCTAssertTrue(
+            error.errorDescription?.contains("Failed to download") ?? false,
+            "Error should mention download failure"
+        )
+        XCTAssertTrue(
+            error.errorDescription?.contains(assetID) ?? false,
+            "Error should include the asset ID"
+        )
+    }
+
     // MARK: - LocalizedError Conformance
 
     func testErrorDescriptionIsUserFriendly() {
@@ -134,7 +151,8 @@ final class WallpaperServiceTests: XCTestCase {
             .customVideoNotSupported,
             .unsupportedFormat(ext: "xyz"),
             .noMainScreen,
-            .aerialNotDownloaded(assetID: "test-asset-id")
+            .aerialNotDownloaded(assetID: "test-asset-id"),
+            .downloadFailed(assetID: "test-asset-id")
         ]
 
         for error in errors {
@@ -231,7 +249,7 @@ final class WallpaperServiceTests: XCTestCase {
                     XCTFail(".\(ext) file exists but got customFileNotFound error")
                 case .customVideoNotSupported:
                     XCTFail(".\(ext) is an image but got customVideoNotSupported error")
-                case .noMainScreen, .plistNotFound, .plistUpdateFailed, .agentRestartFailed, .aerialNotDownloaded:
+                case .noMainScreen, .plistNotFound, .plistUpdateFailed, .agentRestartFailed, .aerialNotDownloaded, .downloadFailed:
                     // These are acceptable - system/environment issues, not format issues
                     break
                 }
@@ -346,7 +364,8 @@ final class WallpaperServiceTests: XCTestCase {
             .customVideoNotSupported,
             .unsupportedFormat(ext: "xyz"),
             .noMainScreen,
-            .aerialNotDownloaded(assetID: "test-asset")
+            .aerialNotDownloaded(assetID: "test-asset"),
+            .downloadFailed(assetID: "test-asset")
         ]
 
         // Each error should have a unique description
