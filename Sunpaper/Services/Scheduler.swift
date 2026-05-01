@@ -2,8 +2,124 @@ import Foundation
 import CoreLocation
 import AppKit
 
+protocol SlotSchedulerTimerToken: AnyObject {
+    func invalidate()
+}
+
+extension Timer: SlotSchedulerTimerToken {}
+
+protocol SlotSchedulerTimerScheduling {
+    @discardableResult
+    func scheduledTimer(
+        withTimeInterval interval: TimeInterval,
+        repeats: Bool,
+        _ handler: @escaping () -> Void
+    ) -> SlotSchedulerTimerToken
+}
+
+struct FoundationSlotSchedulerTimerScheduler: SlotSchedulerTimerScheduling {
+    @discardableResult
+    func scheduledTimer(
+        withTimeInterval interval: TimeInterval,
+        repeats: Bool,
+        _ handler: @escaping () -> Void
+    ) -> SlotSchedulerTimerToken {
+        Timer.scheduledTimer(withTimeInterval: interval, repeats: repeats) { _ in
+            handler()
+        }
+    }
+}
+
+protocol SlotSchedulerWakeObserving {
+    func observeWake(after delay: TimeInterval, handler: @escaping () -> Void) -> NSObjectProtocol
+    func removeObserver(_ observer: NSObjectProtocol)
+}
+
+struct WorkspaceSlotSchedulerWakeObserver: SlotSchedulerWakeObserving {
+    func observeWake(after delay: TimeInterval, handler: @escaping () -> Void) -> NSObjectProtocol {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                handler()
+            }
+        }
+    }
+
+    func removeObserver(_ observer: NSObjectProtocol) {
+        NSWorkspace.shared.notificationCenter.removeObserver(observer)
+    }
+}
+
+protocol SlotSchedulerWallpaperServicing {
+    func downloadAerial(assetID: String, from url: URL) async throws
+    func isAerialDownloaded(assetID: String) -> Bool
+    func setWallpaper(assetID: String, displayUUID: String?) throws
+    func setCustomWallpaper(path: String) throws
+    func getCurrentAssetID() throws -> String?
+}
+
+extension WallpaperService: SlotSchedulerWallpaperServicing {}
+
+protocol SlotSchedulerDisplayProviding {
+    func getDisplays() -> [DisplayManager.Display]
+}
+
+extension DisplayManager: SlotSchedulerDisplayProviding {}
+
+@MainActor
+protocol SlotSchedulerAerialCatalogResolving {
+    func downloadURL(for assetID: String) -> URL?
+}
+
+struct LiveSlotSchedulerAerialCatalogResolver: SlotSchedulerAerialCatalogResolving {
+    func downloadURL(for assetID: String) -> URL? {
+        guard let asset = AerialCatalog.shared.asset(for: assetID),
+              let urlString = asset.videoURL else {
+            return nil
+        }
+
+        return URL(string: urlString)
+    }
+}
+
+struct SlotSchedulerDependencies {
+    var now: () -> Date
+    var calculateSunTimes: (_ location: CLLocationCoordinate2D, _ date: Date) -> SunCalculator.SunTimes
+    var timerScheduler: SlotSchedulerTimerScheduling
+    var wakeObserver: SlotSchedulerWakeObserving
+    var wallpaperService: SlotSchedulerWallpaperServicing
+    var displayProvider: SlotSchedulerDisplayProviding
+    var aerialCatalog: SlotSchedulerAerialCatalogResolving
+
+    static var live: SlotSchedulerDependencies {
+        SlotSchedulerDependencies(
+            now: { Date() },
+            calculateSunTimes: { location, date in
+                SunCalculator.calculate(for: location, on: date)
+            },
+            timerScheduler: FoundationSlotSchedulerTimerScheduler(),
+            wakeObserver: WorkspaceSlotSchedulerWakeObserver(),
+            wallpaperService: WallpaperService.shared,
+            displayProvider: DisplayManager.shared,
+            aerialCatalog: LiveSlotSchedulerAerialCatalogResolver()
+        )
+    }
+}
+
 /// Manages wallpaper scheduling based on flexible time slots
 class SlotScheduler: ObservableObject {
+
+    private enum Timing {
+        static let locationRetryInterval: TimeInterval = 300
+        static let transitionApplyBuffer: TimeInterval = 5
+        static let prefetchLeadTime: TimeInterval = 300
+        static let verificationInterval: TimeInterval = 1800
+        static let wakeRepairDelay: TimeInterval = 10
+        static let noTomorrowSlotsRetryInterval: TimeInterval = 6 * 3600
+    }
 
     // MARK: - Published State
 
@@ -17,17 +133,23 @@ class SlotScheduler: ObservableObject {
 
     private var config: WallpaperConfig
     private var locationProvider: () -> CLLocationCoordinate2D?
-    private var timer: Timer?
-    private var prefetchTimer: Timer?
-    private var verifyTimer: Timer?
-    private var wakeObserver: NSObjectProtocol?
+    private let dependencies: SlotSchedulerDependencies
+    private var timer: SlotSchedulerTimerToken?
+    private var prefetchTimer: SlotSchedulerTimerToken?
+    private var verifyTimer: SlotSchedulerTimerToken?
+    private var wakeObserverToken: NSObjectProtocol?
     private var lastAppliedSlotID: UUID?
 
     // MARK: - Init
 
-    init(config: WallpaperConfig, locationProvider: @escaping () -> CLLocationCoordinate2D?) {
+    init(
+        config: WallpaperConfig,
+        locationProvider: @escaping () -> CLLocationCoordinate2D?,
+        dependencies: SlotSchedulerDependencies = .live
+    ) {
         self.config = config
         self.locationProvider = locationProvider
+        self.dependencies = dependencies
     }
 
     // MARK: - Public API
@@ -46,9 +168,9 @@ class SlotScheduler: ObservableObject {
         prefetchTimer = nil
         verifyTimer?.invalidate()
         verifyTimer = nil
-        if let obs = wakeObserver {
-            NSWorkspace.shared.notificationCenter.removeObserver(obs)
-            wakeObserver = nil
+        if let obs = wakeObserverToken {
+            dependencies.wakeObserver.removeObserver(obs)
+            wakeObserverToken = nil
         }
     }
 
@@ -69,14 +191,12 @@ class SlotScheduler: ObservableObject {
     func applyWallpaper(source: WallpaperSource, displayUUID: String? = nil) {
         switch source {
         case .builtIn(let assetID):
-            if WallpaperService.shared.isAerialDownloaded(assetID: assetID) {
+            if dependencies.wallpaperService.isAerialDownloaded(assetID: assetID) {
                 applyBuiltIn(assetID: assetID, displayUUID: displayUUID)
             } else {
                 // Download then apply
                 Task { @MainActor in
-                    guard let asset = AerialCatalog.shared.asset(for: assetID),
-                          let urlString = asset.videoURL,
-                          let url = URL(string: urlString) else {
+                    guard let url = dependencies.aerialCatalog.downloadURL(for: assetID) else {
                         lastError = "No download URL for aerial \(assetID)"
                         return
                     }
@@ -85,7 +205,7 @@ class SlotScheduler: ObservableObject {
                     defer { self.isDownloading = false }
 
                     do {
-                        try await WallpaperService.shared.downloadAerial(assetID: assetID, from: url)
+                        try await dependencies.wallpaperService.downloadAerial(assetID: assetID, from: url)
                         self.applyBuiltIn(assetID: assetID, displayUUID: displayUUID)
                     } catch {
                         self.lastError = "Download failed: \(error.localizedDescription)"
@@ -94,7 +214,7 @@ class SlotScheduler: ObservableObject {
             }
         case .custom(let path):
             do {
-                try WallpaperService.shared.setCustomWallpaper(path: path)
+                try dependencies.wallpaperService.setCustomWallpaper(path: path)
             } catch {
                 lastError = "Failed to set wallpaper: \(error.localizedDescription)"
             }
@@ -105,7 +225,7 @@ class SlotScheduler: ObservableObject {
 
     private func applyBuiltIn(assetID: String, displayUUID: String?) {
         do {
-            try WallpaperService.shared.setWallpaper(assetID: assetID, displayUUID: displayUUID)
+            try dependencies.wallpaperService.setWallpaper(assetID: assetID, displayUUID: displayUUID)
             lastError = nil
             #if DEBUG
             print("[Scheduler] Applied wallpaper: \(assetID)")
@@ -124,13 +244,14 @@ class SlotScheduler: ObservableObject {
         guard config.enableSolarTracking else { return }
         guard let location = locationProvider() else { return }
 
-        let sunTimes = SunCalculator.calculate(for: location)
+        let currentDate = dependencies.now()
+        let sunTimes = dependencies.calculateSunTimes(location, currentDate)
 
         // Update published state
-        updateScheduleState(sunTimes: sunTimes)
+        updateScheduleState(sunTimes: sunTimes, at: currentDate)
 
         // Find current slot
-        guard let slot = config.currentSlot(sunTimes: sunTimes) else { return }
+        guard let slot = config.currentSlot(sunTimes: sunTimes, at: currentDate) else { return }
 
         // Only apply if slot changed
         guard slot.id != lastAppliedSlotID else { return }
@@ -145,7 +266,7 @@ class SlotScheduler: ObservableObject {
             }
 
             do {
-                try WallpaperService.shared.setWallpaper(assetID: assetID)
+                try dependencies.wallpaperService.setWallpaper(assetID: assetID, displayUUID: nil)
                 lastAppliedSlotID = slot.id
                 lastError = nil
             } catch {
@@ -153,7 +274,7 @@ class SlotScheduler: ObservableObject {
             }
         } else {
             // Per-display mode - apply to each display individually
-            let displays = DisplayManager.shared.getDisplays()
+            let displays = dependencies.displayProvider.getDisplays()
             var anySuccess = false
             var errors: [String] = []
 
@@ -161,7 +282,8 @@ class SlotScheduler: ObservableObject {
                 let displaySlots = config.slots(for: display.uuid)
                 guard let displaySlot = WallpaperConfig.currentSlot(
                     slots: displaySlots,
-                    sunTimes: sunTimes
+                    sunTimes: sunTimes,
+                    at: currentDate
                 ) else {
                     continue
                 }
@@ -171,7 +293,7 @@ class SlotScheduler: ObservableObject {
                 }
 
                 do {
-                    try WallpaperService.shared.setWallpaper(assetID: assetID, displayUUID: display.uuid)
+                    try dependencies.wallpaperService.setWallpaper(assetID: assetID, displayUUID: display.uuid)
                     #if DEBUG
                     print("[Scheduler] Applied \(displaySlot.name) to \(display.displayName)")
                     #endif
@@ -193,19 +315,17 @@ class SlotScheduler: ObservableObject {
         }
     }
 
-    private func updateScheduleState(sunTimes: SunCalculator.SunTimes) {
-        let now = Date()
-
+    private func updateScheduleState(sunTimes: SunCalculator.SunTimes, at date: Date) {
         // Current slot
-        currentSlot = config.currentSlot(sunTimes: sunTimes, at: now)
+        currentSlot = config.currentSlot(sunTimes: sunTimes, at: date)
 
         // Next transition
-        nextTransition = config.nextTransition(sunTimes: sunTimes, at: now)
+        nextTransition = config.nextTransition(sunTimes: sunTimes, at: date)
 
         // Today's full schedule
-        let sorted = config.sortedSlots(sunTimes: sunTimes, on: now)
+        let sorted = config.sortedSlots(sunTimes: sunTimes, on: date)
         todaySchedule = sorted.map { slot in
-            (slot: slot, time: slot.resolvedTime(sunTimes: sunTimes, on: now))
+            (slot: slot, time: slot.resolvedTime(sunTimes: sunTimes, on: date))
         }
     }
 
@@ -217,7 +337,7 @@ class SlotScheduler: ObservableObject {
 
         guard let location = locationProvider() else {
             // Retry in 5 minutes if no location
-            timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: false) { [weak self] _ in
+            timer = dependencies.timerScheduler.scheduledTimer(withTimeInterval: Timing.locationRetryInterval, repeats: false) { [weak self] in
                 self?.updateNow()
                 self?.scheduleNextUpdate()
             }
@@ -227,25 +347,26 @@ class SlotScheduler: ObservableObject {
             return
         }
 
-        let sunTimes = SunCalculator.calculate(for: location)
+        let currentDate = dependencies.now()
+        let sunTimes = dependencies.calculateSunTimes(location, currentDate)
 
-        if let next = config.nextTransition(sunTimes: sunTimes) {
-            let delay = next.date.timeIntervalSinceNow + 5  // 5 second buffer
+        if let next = config.nextTransition(sunTimes: sunTimes, at: currentDate) {
+            let delay = next.date.timeIntervalSince(currentDate) + Timing.transitionApplyBuffer
             #if DEBUG
             print("[Scheduler] Next: \(next.slot.name) in \(Int(delay / 60)) min")
             #endif
 
-            timer = Timer.scheduledTimer(withTimeInterval: max(1, delay), repeats: false) { [weak self] _ in
+            timer = dependencies.timerScheduler.scheduledTimer(withTimeInterval: max(1, delay), repeats: false) { [weak self] in
                 self?.updateNow()
                 self?.scheduleNextUpdate()
             }
 
-            // Prefetch aerial 5 min before transition
+            // Prefetch remains five minutes before each transition.
             schedulePrefetch(before: next.date)
         } else {
             // No more transitions today, schedule for tomorrow morning
-            let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Date())!
-            let tomorrowSun = SunCalculator.calculate(for: location, on: tomorrow)
+            let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: currentDate)!
+            let tomorrowSun = dependencies.calculateSunTimes(location, tomorrow)
 
             // Find first slot tomorrow
             let tomorrowSlots = config.sortedSlots(sunTimes: tomorrowSun, on: tomorrow)
@@ -254,7 +375,7 @@ class SlotScheduler: ObservableObject {
                 print("[Scheduler] No slots configured for tomorrow")
                 #endif
                 // Retry in 6 hours
-                timer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: false) { [weak self] _ in
+                timer = dependencies.timerScheduler.scheduledTimer(withTimeInterval: Timing.noTomorrowSlotsRetryInterval, repeats: false) { [weak self] in
                     self?.updateNow()
                     self?.scheduleNextUpdate()
                 }
@@ -262,34 +383,35 @@ class SlotScheduler: ObservableObject {
             }
 
             let firstTime = firstSlot.resolvedTime(sunTimes: tomorrowSun, on: tomorrow)
-            let delay = firstTime.timeIntervalSinceNow - 300  // 5 min early
+            let delay = firstTime.timeIntervalSince(currentDate) - Timing.prefetchLeadTime
 
             #if DEBUG
             print("[Scheduler] Next: tomorrow \(firstSlot.name) in \(Int(delay / 3600)) hours")
             #endif
 
-            timer = Timer.scheduledTimer(withTimeInterval: max(1, delay), repeats: false) { [weak self] _ in
+            timer = dependencies.timerScheduler.scheduledTimer(withTimeInterval: max(1, delay), repeats: false) { [weak self] in
                 self?.updateNow()
                 self?.scheduleNextUpdate()
             }
 
-            // Prefetch aerial 5 min before tomorrow's transition
+            // Prefetch remains five minutes before tomorrow's first transition.
             schedulePrefetch(before: firstTime)
         }
     }
 
     /// Schedule a prefetch 5 minutes before a transition to download missing aerials
     private func schedulePrefetch(before transitionDate: Date) {
-        let prefetchDelay = transitionDate.timeIntervalSinceNow - 300  // 5 min before
+        let currentDate = dependencies.now()
+        let prefetchDelay = transitionDate.timeIntervalSince(currentDate) - Timing.prefetchLeadTime
 
         if prefetchDelay > 0 {
-            prefetchTimer = Timer.scheduledTimer(withTimeInterval: prefetchDelay, repeats: false) { [weak self] _ in
+            prefetchTimer = dependencies.timerScheduler.scheduledTimer(withTimeInterval: prefetchDelay, repeats: false) { [weak self] in
                 self?.prefetchUpcoming()
             }
             #if DEBUG
             print("[Scheduler] Prefetch scheduled in \(Int(prefetchDelay / 60)) min")
             #endif
-        } else if transitionDate.timeIntervalSinceNow > 0 {
+        } else if transitionDate.timeIntervalSince(currentDate) > 0 {
             // Less than 5 min until transition, prefetch immediately
             prefetchUpcoming()
         }
@@ -299,22 +421,15 @@ class SlotScheduler: ObservableObject {
 
     /// Periodically verify the active wallpaper matches what we expect
     private func startVerifyTimer() {
-        verifyTimer = Timer.scheduledTimer(withTimeInterval: 1800, repeats: true) { [weak self] _ in
+        verifyTimer = dependencies.timerScheduler.scheduledTimer(withTimeInterval: Timing.verificationInterval, repeats: true) { [weak self] in
             self?.verifyCurrentWallpaper()
         }
     }
 
     /// Re-verify wallpaper after waking from sleep
     private func observeWake() {
-        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didWakeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            // Brief delay for system to stabilize after wake
-            DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
-                self?.verifyCurrentWallpaper()
-            }
+        wakeObserverToken = dependencies.wakeObserver.observeWake(after: Timing.wakeRepairDelay) { [weak self] in
+            self?.verifyCurrentWallpaper()
         }
     }
 
@@ -323,30 +438,29 @@ class SlotScheduler: ObservableObject {
         guard config.enableSolarTracking else { return }
         guard let location = locationProvider() else { return }
 
-        let sunTimes = SunCalculator.calculate(for: location)
-        guard let slot = config.currentSlot(sunTimes: sunTimes) else { return }
+        let currentDate = dependencies.now()
+        let sunTimes = dependencies.calculateSunTimes(location, currentDate)
+        guard let slot = config.currentSlot(sunTimes: sunTimes, at: currentDate) else { return }
         guard case .builtIn(let expectedAssetID) = slot.source else { return }
 
         // Check what's actually set in the plist
-        let currentAssetID = try? WallpaperService.shared.getCurrentAssetID()
+        let currentAssetID = try? dependencies.wallpaperService.getCurrentAssetID()
         guard currentAssetID != expectedAssetID else { return }
 
         #if DEBUG
         print("[Scheduler] Wallpaper mismatch: expected \(expectedAssetID), got \(currentAssetID ?? "nil"). Repairing...")
         #endif
 
-        if !WallpaperService.shared.isAerialDownloaded(assetID: expectedAssetID) {
+        if !dependencies.wallpaperService.isAerialDownloaded(assetID: expectedAssetID) {
             // Need to download first, then reapply
             Task { @MainActor in
-                guard let asset = AerialCatalog.shared.asset(for: expectedAssetID),
-                      let urlString = asset.videoURL,
-                      let url = URL(string: urlString) else { return }
+                guard let url = dependencies.aerialCatalog.downloadURL(for: expectedAssetID) else { return }
 
                 self.isDownloading = true
                 defer { self.isDownloading = false }
 
                 do {
-                    try await WallpaperService.shared.downloadAerial(assetID: expectedAssetID, from: url)
+                    try await dependencies.wallpaperService.downloadAerial(assetID: expectedAssetID, from: url)
                 } catch {
                     #if DEBUG
                     print("[Scheduler] Verify download failed: \(error)")
@@ -370,28 +484,28 @@ class SlotScheduler: ObservableObject {
     /// Check if upcoming wallpaper aerials are downloaded, download if missing
     private func prefetchUpcoming() {
         guard let location = locationProvider() else { return }
-        let sunTimes = SunCalculator.calculate(for: location)
+        let currentDate = dependencies.now()
+        let sunTimes = dependencies.calculateSunTimes(location, currentDate)
 
         // Collect all asset IDs needed at the next transition
         var assetIDs: Set<String> = []
 
         if config.displayMode == .allDisplays {
-            if let next = config.nextTransition(sunTimes: sunTimes) {
+            if let next = config.nextTransition(sunTimes: sunTimes, at: currentDate) {
                 if case .builtIn(let assetID) = next.slot.source {
                     assetIDs.insert(assetID)
                 }
             }
         } else {
             // Per-display: check each display's next upcoming slot
-            let displays = DisplayManager.shared.getDisplays()
+            let displays = dependencies.displayProvider.getDisplays()
             for display in displays {
                 let displaySlots = config.slots(for: display.uuid)
                 let sorted = displaySlots
                     .filter { $0.isEnabled }
-                    .sorted { $0.resolvedTime(sunTimes: sunTimes) < $1.resolvedTime(sunTimes: sunTimes) }
-                let now = Date()
+                    .sorted { $0.resolvedTime(sunTimes: sunTimes, on: currentDate) < $1.resolvedTime(sunTimes: sunTimes, on: currentDate) }
                 for slot in sorted {
-                    if slot.resolvedTime(sunTimes: sunTimes) > now {
+                    if slot.resolvedTime(sunTimes: sunTimes, on: currentDate) > currentDate {
                         if case .builtIn(let assetID) = slot.source {
                             assetIDs.insert(assetID)
                         }
@@ -402,7 +516,7 @@ class SlotScheduler: ObservableObject {
         }
 
         // Download any missing aerials
-        let missing = assetIDs.filter { !WallpaperService.shared.isAerialDownloaded(assetID: $0) }
+        let missing = assetIDs.filter { !dependencies.wallpaperService.isAerialDownloaded(assetID: $0) }
         guard !missing.isEmpty else { return }
 
         #if DEBUG
@@ -414,9 +528,7 @@ class SlotScheduler: ObservableObject {
             defer { self.isDownloading = false }
 
             for assetID in missing {
-                guard let asset = AerialCatalog.shared.asset(for: assetID),
-                      let urlString = asset.videoURL,
-                      let url = URL(string: urlString) else {
+                guard let url = dependencies.aerialCatalog.downloadURL(for: assetID) else {
                     #if DEBUG
                     print("[Scheduler] No download URL for aerial \(assetID)")
                     #endif
@@ -424,7 +536,7 @@ class SlotScheduler: ObservableObject {
                 }
 
                 do {
-                    try await WallpaperService.shared.downloadAerial(assetID: assetID, from: url)
+                    try await dependencies.wallpaperService.downloadAerial(assetID: assetID, from: url)
                 } catch {
                     #if DEBUG
                     print("[Scheduler] Prefetch failed for \(assetID): \(error)")
