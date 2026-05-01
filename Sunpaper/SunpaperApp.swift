@@ -10,14 +10,23 @@ struct SunpaperApp: App {
         Settings {
             SettingsView()
         }
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings...") {
+                    appDelegate.openSettings()
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
+        }
     }
 }
 
-class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate {
-    private var statusItem: NSStatusItem!
-    private var popover: NSPopover!
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var statusItem: NSStatusItem?
+    private var popover: NSPopover?
     private var settingsWindow: NSWindow?
-    private var locationManager: CLLocationManager!
+    private var locationManager: CLLocationManager?
     private var scheduler: SlotScheduler?
 
     private var currentLocation: CLLocationCoordinate2D?
@@ -38,17 +47,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Skip singleton check during unit tests
-        let isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-
-        // Ensure single instance (skip during tests)
-        if !isRunningTests {
-            let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
-            if runningApps.count > 1 {
-                NSApp.terminate(nil)
-                return
-            }
-        }
+        guard continueLaunchingAfterSingletonCheck() else { return }
 
         loadConfig()
         setupStatusItem()
@@ -57,10 +56,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        scheduler?.stop()
+        stopScheduler()
     }
 
     // MARK: - Setup
+
+    private func continueLaunchingAfterSingletonCheck() -> Bool {
+        // Skip singleton check during unit tests
+        let isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        guard !isRunningTests else { return true }
+
+        // Ensure single instance (skip during tests)
+        let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
+        guard runningApps.count <= 1 else {
+            quit()
+            return false
+        }
+
+        return true
+    }
 
     private func loadConfig() {
         if let data = UserDefaults.standard.data(forKey: "wallpaperConfig"),
@@ -75,34 +89,49 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate {
     }
 
     private func setupStatusItem() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem = item
 
-        if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "sun.horizon.fill", accessibilityDescription: "Sunpaper")
+        if let button = item.button {
+            button.target = self
             button.action = #selector(togglePopover)
+            setStatusIcon(isDownloading: false)
         }
 
-        popover = NSPopover()
-        popover.contentSize = NSSize(width: 280, height: 300)
-        popover.behavior = .transient
+        setupPopover()
+    }
+
+    private func setupPopover() {
+        let menuPopover = NSPopover()
+        menuPopover.contentSize = NSSize(width: 280, height: 300)
+        menuPopover.behavior = .transient
+        popover = menuPopover
         updatePopoverContent()
     }
 
     private func updatePopoverContent() {
+        guard let popover else { return }
+
         let view = MenuBarView(
             currentSlot: currentSlot,
             nextTransition: nextTransition,
             todaySchedule: todaySchedule,
             lastError: scheduler?.lastError,
             onApplySlot: { [weak self] slot in
-                self?.applySlot(slot)
-                self?.popover.performClose(nil)
+                Task { @MainActor [weak self] in
+                    self?.applySlot(slot)
+                    self?.closePopover()
+                }
             },
             onOpenSettings: { [weak self] in
-                self?.openSettings()
+                Task { @MainActor [weak self] in
+                    self?.openSettings()
+                }
             },
-            onQuit: {
-                NSApp.terminate(nil)
+            onQuit: { [weak self] in
+                Task { @MainActor [weak self] in
+                    self?.quit()
+                }
             }
         )
         popover.contentViewController = NSHostingController(rootView: view)
@@ -113,59 +142,94 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate {
     }
 
     private func setupLocationManager() {
-        locationManager = CLLocationManager()
-        locationManager.delegate = self
-        locationManager.desiredAccuracy = kCLLocationAccuracyKilometer
+        let manager = CLLocationManager()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyKilometer
+        locationManager = manager
 
         // Only request location if we don't have stored coordinates
         if currentLocation == nil {
-            locationManager.requestWhenInUseAuthorization()
-            locationManager.startUpdatingLocation()
+            manager.requestWhenInUseAuthorization()
+            manager.startUpdatingLocation()
         }
     }
 
     private func startScheduler() {
-        scheduler = SlotScheduler(
-            config: config,
-            locationProvider: { [weak self] in self?.currentLocation }
-        )
-        scheduler?.start()
+        cancellables.removeAll()
 
-        // Update menu bar icon when downloading
-        scheduler?.$isDownloading
+        let newScheduler = SlotScheduler(
+            config: config,
+            locationProvider: { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.currentLocation
+                }
+            }
+        )
+        scheduler = newScheduler
+        newScheduler.start()
+
+        observeSchedulerDownloadState(newScheduler)
+    }
+
+    private func stopScheduler() {
+        scheduler?.stop()
+        cancellables.removeAll()
+    }
+
+    private func observeSchedulerDownloadState(_ scheduler: SlotScheduler) {
+        scheduler.$isDownloading
             .receive(on: DispatchQueue.main)
             .sink { [weak self] downloading in
-                guard let button = self?.statusItem.button else { return }
-                let icon = downloading ? "icloud.and.arrow.down.fill" : "sun.horizon.fill"
-                button.image = NSImage(systemSymbolName: icon, accessibilityDescription: "Sunpaper")
+                Task { @MainActor [weak self] in
+                    self?.setStatusIcon(isDownloading: downloading)
+                }
             }
             .store(in: &cancellables)
+    }
+
+    private func setStatusIcon(isDownloading: Bool) {
+        guard let button = statusItem?.button else { return }
+        let icon = isDownloading ? "icloud.and.arrow.down.fill" : "sun.horizon.fill"
+        button.image = NSImage(systemSymbolName: icon, accessibilityDescription: "Sunpaper")
     }
 
     // MARK: - Actions
 
     @objc func togglePopover() {
-        if let button = statusItem.button {
-            if popover.isShown {
-                popover.performClose(nil)
-            } else {
-                // Refresh the view with current state
-                updatePopoverContent()
-                popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        guard let button = statusItem?.button, let popover else { return }
 
-                // Make popover window key to receive input
-                popover.contentViewController?.view.window?.makeKey()
-            }
+        if popover.isShown {
+            closePopover()
+        } else {
+            showPopover(relativeTo: button)
         }
     }
 
     func openSettings() {
-        popover.performClose(nil)
+        closePopover()
+        showSettingsWindow()
+    }
 
+    private func showPopover(relativeTo button: NSStatusBarButton) {
+        guard let popover else { return }
+
+        // Refresh the view with current state
+        updatePopoverContent()
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+
+        // Make popover window key to receive input
+        popover.contentViewController?.view.window?.makeKey()
+    }
+
+    private func closePopover() {
+        popover?.performClose(nil)
+    }
+
+    private func showSettingsWindow() {
         // Reuse existing window if visible
         if let window = settingsWindow, window.isVisible {
             window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            activateApp()
             return
         }
 
@@ -179,11 +243,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate {
         window.setContentSize(NSSize(width: 560, height: 640))
         window.center()
         window.delegate = self
+        window.isReleasedWhenClosed = false
 
         // Keep reference and show
         settingsWindow = window
         window.makeKeyAndOrderFront(nil)
+        activateApp()
+    }
+
+    private func activateApp() {
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func quit() {
+        NSApp.terminate(nil)
     }
 
     func forceUpdate() {
@@ -202,47 +275,80 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate {
         }
     }
 
-    // MARK: - CLLocationManagerDelegate
+    // MARK: - Location Updates
 
-    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+    private func handleLocationUpdate(latitude: Double?, longitude: Double?) {
         // Only use auto-detected location if no stored location
-        if config.latitude == nil || config.longitude == nil {
-            currentLocation = locations.last?.coordinate
-        }
+        guard config.latitude == nil || config.longitude == nil,
+              let latitude,
+              let longitude else { return }
+
+        currentLocation = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 
-    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+    private func handleLocationFailure(_ errorDescription: String) {
         #if DEBUG
-        print("[Location] Error: \(error)")
+        print("[Location] Error: \(errorDescription)")
         #endif
 
+        useFallbackLocationIfNeeded()
+    }
+
+    private func useFallbackLocationIfNeeded() {
         // Fall back to Chicago if no stored location
         if currentLocation == nil {
             currentLocation = CLLocationCoordinate2D(latitude: 41.8781, longitude: -87.6298)
         }
     }
 
-    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        switch manager.authorizationStatus {
+    private func handleLocationAuthorizationChange(_ status: CLAuthorizationStatus) {
+        switch status {
         case .authorized, .authorizedAlways:
             if config.latitude == nil {
-                manager.startUpdatingLocation()
+                locationManager?.startUpdatingLocation()
             }
         case .denied, .restricted:
             #if DEBUG
             print("[Location] Permission denied")
             #endif
             // Fall back to default
-            if currentLocation == nil {
-                currentLocation = CLLocationCoordinate2D(latitude: 41.8781, longitude: -87.6298)
-            }
+            useFallbackLocationIfNeeded()
         case .notDetermined:
             break
         @unknown default:
             break
         }
     }
+}
 
+// MARK: - CLLocationManagerDelegate
+
+extension AppDelegate: CLLocationManagerDelegate {
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        let coordinate = locations.last?.coordinate
+        let latitude = coordinate?.latitude
+        let longitude = coordinate?.longitude
+
+        Task { @MainActor [weak self] in
+            self?.handleLocationUpdate(latitude: latitude, longitude: longitude)
+        }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        let errorDescription = String(describing: error)
+
+        Task { @MainActor [weak self] in
+            self?.handleLocationFailure(errorDescription)
+        }
+    }
+
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        let status = manager.authorizationStatus
+
+        Task { @MainActor [weak self] in
+            self?.handleLocationAuthorizationChange(status)
+        }
+    }
 }
 
 // MARK: - NSWindowDelegate
