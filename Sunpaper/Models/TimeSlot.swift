@@ -227,6 +227,9 @@ enum DisplayMode: String, Codable, Equatable {
 
 /// Main configuration for the app
 struct WallpaperConfig: Codable, Equatable {
+    static let currentSchemaVersion = 1
+    static let userDefaultsKey = "wallpaperConfig"
+
     var slots: [TimeSlot]
     var enableSolarTracking: Bool
     var locationName: String?
@@ -251,6 +254,90 @@ struct WallpaperConfig: Codable, Equatable {
         self.longitude = longitude
         self.displayMode = displayMode
         self.perDisplayConfigs = perDisplayConfigs
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case slots
+        case enableSolarTracking
+        case locationName
+        case latitude
+        case longitude
+        case displayMode
+        case perDisplayConfigs
+    }
+
+    private enum EnvelopeCodingKeys: String, CodingKey {
+        case wallpaperConfig
+    }
+
+    init(from decoder: Decoder) throws {
+        if let envelope = try? decoder.container(keyedBy: EnvelopeCodingKeys.self),
+           envelope.contains(.wallpaperConfig) {
+            self = try envelope.decode(WallpaperConfig.self, forKey: .wallpaperConfig)
+            return
+        }
+
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaultConfig = Self.default
+
+        slots = try container.decodeIfPresent([TimeSlot].self, forKey: .slots) ?? defaultConfig.slots
+        enableSolarTracking = try container.decodeIfPresent(Bool.self, forKey: .enableSolarTracking) ?? defaultConfig.enableSolarTracking
+        locationName = try container.decodeIfPresent(String.self, forKey: .locationName)
+        latitude = try container.decodeIfPresent(Double.self, forKey: .latitude)
+        longitude = try container.decodeIfPresent(Double.self, forKey: .longitude)
+        displayMode = try container.decodeIfPresent(DisplayMode.self, forKey: .displayMode) ?? defaultConfig.displayMode
+        perDisplayConfigs = try container.decodeIfPresent([DisplayConfig].self, forKey: .perDisplayConfigs) ?? defaultConfig.perDisplayConfigs
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(slots, forKey: .slots)
+        try container.encode(enableSolarTracking, forKey: .enableSolarTracking)
+        try container.encodeIfPresent(locationName, forKey: .locationName)
+        try container.encodeIfPresent(latitude, forKey: .latitude)
+        try container.encodeIfPresent(longitude, forKey: .longitude)
+        try container.encode(displayMode, forKey: .displayMode)
+        try container.encode(perDisplayConfigs, forKey: .perDisplayConfigs)
+    }
+
+    static func makeDefault() -> WallpaperConfig {
+        Self.default
+    }
+
+    static func decodeCompatible(from data: Data, decoder: JSONDecoder = JSONDecoder()) -> WallpaperConfig? {
+        if let envelope = try? decoder.decode(AppPreferencesEnvelope.self, from: data) {
+            return migratedConfig(from: envelope)
+        }
+
+        return try? decoder.decode(WallpaperConfig.self, from: data)
+    }
+
+    static func decodeCompatibleOrDefault(from data: Data?, decoder: JSONDecoder = JSONDecoder()) -> WallpaperConfig {
+        guard let data else { return makeDefault() }
+        return decodeCompatible(from: data, decoder: decoder) ?? makeDefault()
+    }
+
+    static func migratedConfig(from envelope: AppPreferencesEnvelope) -> WallpaperConfig {
+        switch envelope.schemaVersion {
+        case Self.currentSchemaVersion:
+            return envelope.wallpaperConfig
+        default:
+            // Future schema versions still carry the known nested config shape.
+            return envelope.wallpaperConfig
+        }
+    }
+
+    func persistenceEnvelope(
+        schemaVersion: Int = WallpaperConfig.currentSchemaVersion,
+        createdByAppVersion: String? = nil,
+        updatedAt: Date? = nil
+    ) -> AppPreferencesEnvelope {
+        AppPreferencesEnvelope(
+            schemaVersion: schemaVersion,
+            wallpaperConfig: self,
+            createdByAppVersion: createdByAppVersion,
+            updatedAt: updatedAt
+        )
     }
 
     /// Get slots for a specific display (when in per-display mode)
@@ -346,6 +433,25 @@ struct WallpaperConfig: Codable, Equatable {
         ],
         enableSolarTracking: true
     )
+}
+
+struct AppPreferencesEnvelope: Codable, Equatable {
+    var schemaVersion: Int
+    var wallpaperConfig: WallpaperConfig
+    var createdByAppVersion: String?
+    var updatedAt: Date?
+
+    init(
+        schemaVersion: Int = WallpaperConfig.currentSchemaVersion,
+        wallpaperConfig: WallpaperConfig = .default,
+        createdByAppVersion: String? = nil,
+        updatedAt: Date? = nil
+    ) {
+        self.schemaVersion = schemaVersion
+        self.wallpaperConfig = wallpaperConfig
+        self.createdByAppVersion = createdByAppVersion
+        self.updatedAt = updatedAt
+    }
 }
 
 // MARK: - Built-in Wallpapers Registry
