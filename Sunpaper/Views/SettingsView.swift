@@ -9,47 +9,41 @@ struct SettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                // Header
+            VStack(alignment: .leading, spacing: 16) {
                 headerSection
 
                 Divider()
 
-                // Location
                 locationSection
 
                 Divider()
 
-                // Solar tracking toggle
                 solarTrackingSection
 
                 if viewModel.config.enableSolarTracking {
                     Divider()
 
-                    // Display mode
                     displayModeSection
 
                     Divider()
 
-                    // Time slots
                     timeSlotsSection
 
                     Divider()
 
-                    // Today's schedule
                     scheduleSection
                 }
 
                 Divider()
 
-                // General settings
                 generalSection
 
-                Spacer(minLength: 20)
+                Spacer(minLength: 12)
             }
-            .padding()
+            .padding(20)
         }
         .frame(minWidth: 520, idealWidth: 560, minHeight: 500)
+        .accessibilityIdentifier("settingsView")
         .sheet(isPresented: $showingLocationPicker) {
             LocationPickerView(
                 currentLocation: viewModel.config.locationName,
@@ -73,6 +67,7 @@ struct SettingsView: View {
                         endPoint: .bottomTrailing
                     )
                 )
+                .accessibilityHidden(true)
             VStack(alignment: .leading) {
                 Text("Sunpaper")
                     .font(.title2.bold())
@@ -82,6 +77,8 @@ struct SettingsView: View {
             }
             Spacer()
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("settingsHeader")
     }
 
     private var locationSection: some View {
@@ -92,29 +89,40 @@ struct SettingsView: View {
             HStack {
                 Image(systemName: "location.fill")
                     .foregroundColor(.blue)
+                    .accessibilityHidden(true)
 
                 if let name = viewModel.config.locationName {
                     Text(name)
+                        .accessibilityLabel("Current location")
+                        .accessibilityValue(name)
                 } else {
                     Text("Not set")
                         .foregroundColor(.secondary)
+                        .accessibilityLabel("Current location")
+                        .accessibilityValue("Not set")
                 }
 
                 Spacer()
 
-                Button("Change") {
+                Button("Change...") {
                     showingLocationPicker = true
                 }
                 .buttonStyle(.bordered)
+                .accessibilityLabel("Change location")
+                .accessibilityHint("Opens location search.")
+                .accessibilityIdentifier("changeLocationButton")
             }
             .padding(12)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("currentLocationRow")
 
             // Polar region warning
             if let warning = viewModel.polarWarning {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(.orange)
+                        .accessibilityHidden(true)
                     Text(warning)
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -122,35 +130,46 @@ struct SettingsView: View {
                 .padding(12)
                 .background(Color.orange.opacity(0.1))
                 .cornerRadius(8)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Location warning")
+                .accessibilityValue(warning)
+                .accessibilityIdentifier("polarWarning")
             }
         }
+        .accessibilityIdentifier("locationSection")
     }
 
     private var solarTrackingSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Toggle(isOn: $viewModel.config.enableSolarTracking) {
                 VStack(alignment: .leading) {
-                    Text("Change wallpaper by sun position")
+                    Text("Solar Tracking")
                         .font(.headline)
-                    Text("Automatically switch wallpapers at sunrise, sunset, and custom times")
+                    Text("Switch wallpapers at sunrise, sunset, and custom times.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
             }
             .toggleStyle(.switch)
+            .accessibilityLabel("Solar tracking")
+            .accessibilityHint("Turns automatic wallpaper changes based on sun position on or off.")
+            .accessibilityIdentifier("solarTrackingToggle")
         }
     }
 
     private var displayModeSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Display Configuration")
+            Text("Displays")
                 .font(.headline)
 
-            Picker("", selection: $viewModel.config.displayMode) {
+            Picker("Display mode", selection: $viewModel.config.displayMode) {
                 Text("Same on all displays").tag(DisplayMode.allDisplays)
                 Text("Per-display wallpapers").tag(DisplayMode.perDisplay)
             }
             .pickerStyle(.radioGroup)
+            .accessibilityLabel("Display mode")
+            .accessibilityHint("Choose whether all displays use the same slots or each display has its own slots.")
+            .accessibilityIdentifier("displayModePicker")
 
             if viewModel.config.displayMode == .perDisplay {
                 VStack(alignment: .leading, spacing: 8) {
@@ -162,19 +181,30 @@ struct SettingsView: View {
                         HStack {
                             Image(systemName: display.isPrimary ? "desktopcomputer" : "display")
                                 .foregroundColor(display.isPrimary ? .blue : .secondary)
+                                .accessibilityHidden(true)
                             Text(display.displayName)
                                 .font(.caption)
+                            if display.isPrimary {
+                                Text("Primary")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                             Spacer()
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel(display.displayName)
+                        .accessibilityValue(display.isPrimary ? "Primary display" : "Connected display")
                     }
                 }
                 .padding(12)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                .accessibilityIdentifier("connectedDisplaysList")
             }
         }
+        .accessibilityIdentifier("displaySection")
     }
 
     private var timeSlotsSection: some View {
@@ -202,10 +232,15 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+                .accessibilityLabel("Add time slot")
+                .accessibilityHint("Adds a wallpaper time slot for all displays.")
+                .accessibilityIdentifier("addAllDisplaysSlotButton")
             }
 
             if viewModel.config.slots.isEmpty {
-                emptySlotState
+                emptySlotState {
+                    viewModel.addSlot()
+                }
             } else {
                 ForEach($viewModel.config.slots) { $slot in
                     TimeSlotRow(
@@ -248,11 +283,16 @@ struct SettingsView: View {
                                 }
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)
+                                .accessibilityLabel("Add time slot for \(display.displayName)")
+                                .accessibilityHint("Adds a wallpaper time slot for this display.")
+                                .accessibilityIdentifier("addDisplaySlotButton.\(display.uuid)")
                             }
 
                             let displaySlots = viewModel.getDisplaySlots(for: display.uuid)
                             if displaySlots.isEmpty {
-                                emptySlotState
+                                emptySlotState {
+                                    viewModel.addSlot(for: display.uuid)
+                                }
                             } else {
                                 ForEach(displaySlots.indices, id: \.self) { index in
                                     TimeSlotRow(
@@ -268,37 +308,47 @@ struct SettingsView: View {
                             Text(display.displayName)
                         }
                         .tag(display.uuid)
+                        .accessibilityLabel("Time slots for \(display.displayName)")
                     }
                 }
                 .frame(minHeight: 300)
+                .accessibilityLabel("Per-display time slots")
+                .accessibilityHint("Select a display tab to edit its wallpaper schedule.")
+                .accessibilityIdentifier("displaySlotsTabView")
             }
         }
     }
 
-    private var emptySlotState: some View {
+    private func emptySlotState(addAction: @escaping () -> Void) -> some View {
         VStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.largeTitle)
                 .foregroundColor(.orange)
-            Text("No time slots configured")
+                .accessibilityHidden(true)
+            Text("No time slots")
                 .font(.subheadline)
                 .fontWeight(.medium)
-            Text("Add at least one slot to enable wallpaper changes")
+            Text("Add a slot to start wallpaper changes.")
                 .font(.caption)
                 .foregroundColor(.secondary)
             Button {
-                viewModel.addSlot()
+                addAction()
             } label: {
                 Label("Add Slot", systemImage: "plus.circle")
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
             .padding(.top, 4)
+            .accessibilityLabel("Add time slot")
+            .accessibilityHint("Adds a wallpaper time slot.")
+            .accessibilityIdentifier("emptyStateAddSlotButton")
         }
         .frame(maxWidth: .infinity)
         .padding(20)
         .background(Color.orange.opacity(0.1))
         .cornerRadius(8)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("emptyTimeSlotsState")
     }
 
     private var scheduleSection: some View {
@@ -310,6 +360,7 @@ struct SettingsView: View {
                 Text("No transitions scheduled")
                     .font(.caption)
                     .foregroundColor(.secondary)
+                    .accessibilityIdentifier("emptyScheduleState")
             } else {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(viewModel.todaySchedule, id: \.slot.id) { item in
@@ -321,7 +372,7 @@ struct SettingsView: View {
                             Text(item.slot.name)
 
                             if item.slot.id == viewModel.currentSlot?.id {
-                                Text("(now)")
+                                Text("(current)")
                                     .font(.caption)
                                     .foregroundColor(.green)
                             }
@@ -329,12 +380,16 @@ struct SettingsView: View {
                             Spacer()
                         }
                         .padding(.vertical, 2)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel(scheduleAccessibilityLabel(for: item))
                     }
                 }
                 .padding(12)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                .accessibilityIdentifier("todayScheduleList")
             }
         }
+        .accessibilityIdentifier("scheduleSection")
     }
 
     private var generalSection: some View {
@@ -343,6 +398,9 @@ struct SettingsView: View {
                 .font(.headline)
 
             Toggle("Launch at Login", isOn: $viewModel.launchAtLogin)
+                .accessibilityLabel("Launch at login")
+                .accessibilityHint("Opens Sunpaper automatically when you sign in.")
+                .accessibilityIdentifier("launchAtLoginToggle")
 
             HStack {
                 Text("Version")
@@ -350,27 +408,42 @@ struct SettingsView: View {
                 Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")
                     .foregroundColor(.secondary)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Version")
+            .accessibilityValue(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")
+            .accessibilityIdentifier("versionRow")
 
-            Button("Reset to Defaults") {
+            Divider()
+
+            Button("Reset to Defaults...") {
                 showingResetConfirmation = true
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+            .accessibilityLabel("Reset to defaults")
+            .accessibilityHint("Opens a confirmation before removing custom time slots and restoring defaults.")
+            .accessibilityIdentifier("resetDefaultsButton")
             .alert("Reset to Defaults?", isPresented: $showingResetConfirmation) {
                 Button("Cancel", role: .cancel) { }
                 Button("Reset", role: .destructive) {
                     viewModel.resetToDefaults()
                 }
             } message: {
-                Text("This will delete your custom time slots and restore the default configuration.")
+                Text("This removes your custom time slots and restores the default configuration.")
             }
         }
+        .accessibilityIdentifier("generalSection")
     }
 
     private func formatTime(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.timeStyle = .short
         return formatter.string(from: date)
+    }
+
+    private func scheduleAccessibilityLabel(for item: (slot: TimeSlot, time: Date)) -> String {
+        let currentText = item.slot.id == viewModel.currentSlot?.id ? ", current slot" : ""
+        return "\(item.slot.name), \(formatTime(item.time))\(currentText)"
     }
 }
 
@@ -383,31 +456,37 @@ struct TimeSlotRow: View {
     @State private var showingTriggerEditor = false
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             // Icon based on slot name
             Image(systemName: slotIcon)
                 .font(.title2)
                 .symbolRenderingMode(.palette)
                 .foregroundStyle(iconColors.0, iconColors.1)
                 .frame(width: 32)
+                .accessibilityHidden(true)
 
             // Main content
             VStack(alignment: .leading, spacing: 6) {
                 // Row 1: Name and delete
                 HStack {
-                    TextField("Name", text: $slot.name)
-                        .textFieldStyle(.plain)
+                    TextField("Slot name", text: $slot.name)
                         .font(.headline)
+                        .accessibilityLabel("Slot name")
+                        .accessibilityValue(slot.name)
+                        .accessibilityIdentifier("timeSlotName.\(slot.id.uuidString)")
 
                     Spacer()
 
-                    Button {
+                    Button(role: .destructive) {
                         onDelete()
                     } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.tertiary)
+                        Label("Delete slot", systemImage: "minus.circle")
                     }
-                    .buttonStyle(.plain)
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Delete \(slot.name)")
+                    .accessibilityHint("Removes this time slot.")
+                    .accessibilityIdentifier("deleteTimeSlot.\(slot.id.uuidString)")
                 }
 
                 // Row 2: Trigger and wallpaper
@@ -416,11 +495,14 @@ struct TimeSlotRow: View {
                     Button {
                         showingTriggerEditor.toggle()
                     } label: {
-                        Text(slot.trigger.displayName)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                        Label(slot.trigger.displayName, systemImage: slot.trigger.icon)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .accessibilityLabel("Trigger")
+                    .accessibilityValue(slot.trigger.displayName)
+                    .accessibilityHint("Opens trigger editing.")
+                    .accessibilityIdentifier("editTrigger.\(slot.id.uuidString)")
                     .popover(isPresented: $showingTriggerEditor) {
                         TriggerEditorPopover(trigger: $slot.trigger)
                     }
@@ -433,7 +515,9 @@ struct TimeSlotRow: View {
             }
         }
         .padding(12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("timeSlotRow.\(slot.id.uuidString)")
     }
 
     // Icon based on slot name keywords
@@ -485,7 +569,7 @@ struct TriggerEditorPopover: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Trigger Time")
+            Text("Trigger")
                 .font(.headline)
 
             // Event picker
@@ -497,6 +581,9 @@ struct TriggerEditorPopover: View {
                 Text("Fixed Time").tag(Optional<SolarEvent>.none)
             }
             .pickerStyle(.radioGroup)
+            .accessibilityLabel("Trigger event")
+            .accessibilityHint("Choose a solar event or a fixed time.")
+            .accessibilityIdentifier("triggerEventPicker")
 
             Divider()
 
@@ -509,6 +596,10 @@ struct TriggerEditorPopover: View {
                         Text(formatOffset(offset))
                             .monospacedDigit()
                     }
+                    .accessibilityLabel("Solar offset")
+                    .accessibilityValue(formatOffset(offset))
+                    .accessibilityHint("Adjusts the trigger time in 15 minute steps.")
+                    .accessibilityIdentifier("triggerOffsetStepper")
                 }
             } else if case .fixed = trigger {
                 HStack {
@@ -516,11 +607,26 @@ struct TriggerEditorPopover: View {
                     Spacer()
                     DatePicker("", selection: fixedTimeBinding, displayedComponents: .hourAndMinute)
                         .labelsHidden()
+                        .accessibilityLabel("Fixed time")
+                        .accessibilityHint("Sets the time of day for this trigger.")
+                        .accessibilityIdentifier("triggerFixedTimePicker")
                 }
+            }
+
+            Divider()
+
+            HStack {
+                Spacer()
+                Button("Done") {
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("doneEditingTriggerButton")
             }
         }
         .padding()
         .frame(width: 240)
+        .accessibilityIdentifier("triggerEditorPopover")
     }
 
     private func formatOffset(_ seconds: TimeInterval) -> String {
@@ -603,28 +709,34 @@ struct TriggerPicker: View {
     var body: some View {
         HStack(spacing: 4) {
             // Event picker
-            Picker("", selection: eventBinding) {
+            Picker("Trigger event", selection: eventBinding) {
                 ForEach(SolarEvent.allCases, id: \.self) { event in
-                    Text(event.displayName).tag(event)
+                    Text(event.displayName).tag(Optional(event))
                 }
                 Divider()
                 Text("Fixed Time").tag(Optional<SolarEvent>.none)
             }
             .labelsHidden()
             .frame(width: 100)
+            .accessibilityLabel("Trigger event")
+            .accessibilityIdentifier("inlineTriggerEventPicker")
 
             // Offset stepper (for solar events)
-            if case .solar(_, let offset) = trigger {
+            if case .solar = trigger {
                 OffsetStepper(offset: offsetBinding)
             }
 
             // Time picker (for fixed)
-            if case .fixed(let hour, let minute) = trigger {
-                DatePicker("", selection: fixedTimeBinding, displayedComponents: .hourAndMinute)
+            if case .fixed = trigger {
+                DatePicker("Fixed time", selection: fixedTimeBinding, displayedComponents: .hourAndMinute)
                     .labelsHidden()
                     .frame(width: 80)
+                    .accessibilityLabel("Fixed time")
+                    .accessibilityIdentifier("inlineTriggerFixedTimePicker")
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("inlineTriggerPicker")
     }
 
     private var eventBinding: Binding<SolarEvent?> {
@@ -700,23 +812,33 @@ struct OffsetStepper: View {
             Button {
                 offset -= 3600
             } label: {
-                Image(systemName: "minus")
+                Label("Decrease offset", systemImage: "minus")
             }
+            .labelStyle(.iconOnly)
             .buttonStyle(.bordered)
             .controlSize(.small)
+            .accessibilityHint("Moves the trigger one hour earlier.")
+            .accessibilityIdentifier("decreaseOffsetButton")
 
             Text(displayText)
                 .font(.system(.caption, design: .monospaced))
                 .frame(width: 40)
+                .accessibilityLabel("Offset")
+                .accessibilityValue(displayText)
 
             Button {
                 offset += 3600
             } label: {
-                Image(systemName: "plus")
+                Label("Increase offset", systemImage: "plus")
             }
+            .labelStyle(.iconOnly)
             .buttonStyle(.bordered)
             .controlSize(.small)
+            .accessibilityHint("Moves the trigger one hour later.")
+            .accessibilityIdentifier("increaseOffsetButton")
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("offsetStepper")
     }
 }
 
@@ -738,6 +860,7 @@ struct WallpaperPicker: View {
                 if case .builtIn(let assetID) = source,
                    let asset = catalog.asset(for: assetID) {
                     AsyncThumbnail(url: asset.thumbnailURL, size: CGSize(width: 36, height: 22))
+                        .accessibilityHidden(true)
                 } else {
                     RoundedRectangle(cornerRadius: 4)
                         .fill(.quaternary)
@@ -747,6 +870,7 @@ struct WallpaperPicker: View {
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
                         }
+                        .accessibilityHidden(true)
                 }
 
                 Text(displayName)
@@ -757,12 +881,17 @@ struct WallpaperPicker: View {
                 Image(systemName: "chevron.down")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Wallpaper")
+        .accessibilityValue(displayName)
+        .accessibilityHint("Opens wallpaper selection and previews the selected wallpaper.")
+        .accessibilityIdentifier("wallpaperPickerButton")
         .sheet(isPresented: $showingGridPicker) {
             WallpaperGridPicker(selectedSource: $source) { newSource in
                 source = newSource
@@ -977,23 +1106,36 @@ struct LocationPickerView: View {
     @StateObject private var searchViewModel = LocationSearchViewModel()
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("Set Location")
                 .font(.headline)
+
+            Text("Current: \(currentLocation ?? "Not set")")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+                .accessibilityIdentifier("currentLocationSummary")
 
             // Search field
             HStack {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(.secondary)
-                TextField("Search city...", text: $searchViewModel.searchText)
+                    .accessibilityHidden(true)
+                TextField("Search city or address", text: $searchViewModel.searchText)
                     .textFieldStyle(.plain)
+                    .accessibilityLabel("Search locations")
+                    .accessibilityHint("Type a city or address to search.")
+                    .accessibilityIdentifier("locationSearchField")
                 if searchViewModel.isSearching {
                     ProgressView()
                         .scaleEffect(0.7)
+                        .accessibilityLabel("Searching locations")
                 }
             }
             .padding(8)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("locationSearchRow")
 
             // Search results or quick picks
             ScrollView {
@@ -1012,6 +1154,7 @@ struct LocationPickerView: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .padding(.top, 4)
+                            .accessibilityAddTraits(.isHeader)
 
                         ForEach(LocationSearchViewModel.quickPicks) { pick in
                             LocationButton(
@@ -1022,13 +1165,16 @@ struct LocationPickerView: View {
                             )
                         }
                     } else if !searchViewModel.isSearching {
-                        Text("No results found")
+                        Text("No locations found")
                             .foregroundColor(.secondary)
                             .frame(maxWidth: .infinity, alignment: .center)
                             .padding()
+                            .accessibilityIdentifier("noLocationResults")
                     }
                 }
             }
+            .accessibilityLabel(searchViewModel.searchText.isEmpty ? "Quick location picks" : "Location search results")
+            .accessibilityIdentifier("locationResultsList")
 
             Divider()
 
@@ -1036,9 +1182,12 @@ struct LocationPickerView: View {
                 dismiss()
             }
             .buttonStyle(.bordered)
+            .keyboardShortcut(.cancelAction)
+            .accessibilityIdentifier("cancelLocationPickerButton")
         }
         .padding()
         .frame(width: 320, height: 400)
+        .accessibilityIdentifier("locationPicker")
     }
 
     private func selectAndDismiss(name: String, lat: Double, lon: Double) {
@@ -1060,6 +1209,7 @@ struct LocationButton: View {
             HStack {
                 Image(systemName: "mappin.circle.fill")
                     .foregroundColor(.red)
+                    .accessibilityHidden(true)
                 Text(name)
                     .lineLimit(1)
                 Spacer()
@@ -1068,6 +1218,9 @@ struct LocationButton: View {
         .buttonStyle(.plain)
         .padding(8)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+        .accessibilityLabel(name)
+        .accessibilityHint("Sets this as the wallpaper schedule location.")
+        .accessibilityIdentifier("locationResult.\(name)")
     }
 }
 
