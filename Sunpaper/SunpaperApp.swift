@@ -105,7 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupPopover() {
         let menuPopover = NSPopover()
-        menuPopover.contentSize = NSSize(width: 280, height: 300)
+        menuPopover.contentSize = NSSize(width: SunpaperSize.popoverWidth, height: SunpaperSize.popoverHeight)
         menuPopover.behavior = .transient
         popover = menuPopover
         updatePopoverContent()
@@ -137,7 +137,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         )
-        popover.contentViewController = NSHostingController(rootView: view)
+        popover.contentViewController = NSHostingController(
+            rootView: view
+                .frame(width: SunpaperSize.popoverWidth)
+        )
     }
 
     private func applySlot(_ slot: TimeSlot) {
@@ -281,12 +284,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Create settings window
         let settingsView = SettingsView()
+            .frame(
+                minWidth: SunpaperSize.settingsMinWidth,
+                idealWidth: SunpaperSize.settingsIdealWidth,
+                minHeight: SunpaperSize.settingsMinHeight,
+                idealHeight: SunpaperSize.settingsIdealHeight
+            )
         let hostingController = NSHostingController(rootView: settingsView)
 
         let window = NSWindow(contentViewController: hostingController)
         window.title = "Sunpaper Settings"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        window.setContentSize(NSSize(width: 560, height: 640))
+        window.styleMask.insert(.fullSizeContentView)
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isMovableByWindowBackground = true
+        window.contentMinSize = NSSize(width: SunpaperSize.settingsMinWidth, height: SunpaperSize.settingsMinHeight)
+        window.setContentSize(NSSize(width: SunpaperSize.settingsIdealWidth, height: SunpaperSize.settingsIdealHeight))
         window.center()
         window.delegate = self
         window.isReleasedWhenClosed = false

@@ -17,6 +17,7 @@
 		A1000009 /* TimeSlot.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000010; };
 		A1000011 /* AerialCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000011; };
 		A1000012 /* WallpaperGridPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000012; };
+		A1000014 /* SunpaperDesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000014; };
 		B1000001 /* SunCalculatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001; };
 		B1000002 /* TimeSlotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000002; };
 		B1000003 /* SchedulerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000003; };
@@ -54,6 +55,7 @@
 		A2000011 /* AerialCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AerialCatalog.swift; sourceTree = "<group>"; };
 		A2000012 /* WallpaperGridPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WallpaperGridPicker.swift; sourceTree = "<group>"; };
 		A2000013 /* DisplayManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayManager.swift; sourceTree = "<group>"; };
+		A2000014 /* SunpaperDesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SunpaperDesignSystem.swift; sourceTree = "<group>"; };
 		B2000004 /* AerialCatalogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AerialCatalogTests.swift; sourceTree = "<group>"; };
 		B2000005 /* DisplayManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayManagerTests.swift; sourceTree = "<group>"; };
 		B2000006 /* WallpaperServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WallpaperServiceTests.swift; sourceTree = "<group>"; };
@@ -114,6 +116,7 @@
 				A2000002 /* MenuBarView.swift */,
 				A2000003 /* SettingsView.swift */,
 				A2000012 /* WallpaperGridPicker.swift */,
+				A2000014 /* SunpaperDesignSystem.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -260,6 +263,7 @@
 				A1000011 /* AerialCatalog.swift in Sources */,
 				A1000012 /* WallpaperGridPicker.swift in Sources */,
 				A1000013 /* DisplayManager.swift in Sources */,
+				A1000014 /* SunpaperDesignSystem.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

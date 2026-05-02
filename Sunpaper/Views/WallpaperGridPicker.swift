@@ -67,36 +67,38 @@ struct WallpaperGridPicker: View {
     @State private var customFileError: String?
     @FocusState private var isSearchFocused: Bool
 
+    private let sheetSize = CGSize(width: 680, height: 620)
+
     private var selectedAssetID: String? {
         if case .builtIn(let id) = selectedSource { return id }
         return nil
     }
 
     private let columns = [
-        GridItem(.adaptive(minimum: 160, maximum: 180), spacing: 12)
+        GridItem(.adaptive(minimum: 150, maximum: 172), spacing: 14)
     ]
 
     var body: some View {
         VStack(spacing: 0) {
             header
 
-            Divider()
-
             sourceControls
 
-            Divider()
-
-            if selectedTab == .aerials {
-                aerialGrid
-            } else {
-                customWallpaperSection
+            ZStack {
+                if selectedTab == .aerials {
+                    aerialGrid
+                } else {
+                    customWallpaperSection
+                }
             }
-
-            Divider()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(nsColor: .windowBackgroundColor).opacity(0.36))
 
             footer
         }
-        .frame(width: 640, height: 580)
+        .frame(width: sheetSize.width, height: sheetSize.height)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .onAppear {
             if case .custom = selectedSource {
                 selectedTab = .custom
@@ -138,8 +140,10 @@ struct WallpaperGridPicker: View {
                                 .id(asset.id)
                             }
                         }
-                        .padding(16)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 16)
                     }
+                    .scrollContentBackground(.hidden)
                     .accessibilityIdentifier("aerialWallpaperGrid")
                     .onAppear {
                         scrollSelectedAssetIntoView(with: proxy)
@@ -170,7 +174,7 @@ struct WallpaperGridPicker: View {
     ) -> some View {
         VStack(spacing: 14) {
             Image(systemName: systemImage)
-                .font(.system(size: 36))
+                .font(.system(size: 34, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
 
@@ -186,14 +190,20 @@ struct WallpaperGridPicker: View {
                 .frame(maxWidth: 460)
 
             if let actionTitle, let action {
-                Button(actionTitle, action: action)
-                    .buttonStyle(.bordered)
-                    .controlSize(.regular)
-                    .accessibilityHint(actionHint ?? "")
+                Button {
+                    action()
+                } label: {
+                    Label(actionTitle, systemImage: actionTitle == "Clear Search" ? "xmark.circle" : "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                .accessibilityHint(actionHint ?? "")
             }
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(24)
         .accessibilityElement(children: .contain)
     }
 
@@ -206,63 +216,87 @@ struct WallpaperGridPicker: View {
     }
 
     private var customWallpaperSection: some View {
-        VStack(spacing: 18) {
-            Spacer()
+        VStack(spacing: 16) {
+            VStack(spacing: 14) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(.regularMaterial)
 
-            Image(systemName: "photo.on.rectangle.angled")
-                .font(.system(size: 44))
-                .foregroundStyle(.secondary)
-                .accessibilityHidden(true)
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(.quaternary, style: StrokeStyle(lineWidth: 1, dash: [7, 5]))
 
-            Text("Choose a Custom Image")
-                .font(.headline)
+                    VStack(spacing: 14) {
+                        Image(systemName: "photo.on.rectangle.angled")
+                            .font(.system(size: 42, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
 
-            Text("Use a static image file for this wallpaper. Custom video wallpapers are not supported yet.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 430)
+                        VStack(spacing: 6) {
+                            Text("Choose a Custom Image")
+                                .font(.title3.weight(.semibold))
 
-            if let selectedCustomFileName {
-                Label {
-                    Text(selectedCustomFileName)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                } icon: {
-                    Image(systemName: "photo")
+                            Text("Use a static image file for this wallpaper. Custom video wallpapers are not supported yet.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: 430)
+                        }
+
+                        Button {
+                            chooseCustomFile()
+                        } label: {
+                            Label("Choose Image...", systemImage: "photo.badge.plus")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .keyboardShortcut(.defaultAction)
+                        .accessibilityHint("Opens a file picker for a custom static wallpaper image.")
+                    }
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 30)
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: 430)
-                .accessibilityLabel("Current custom image")
-                .accessibilityValue(selectedCustomFileName)
+                .frame(maxWidth: 500, minHeight: 220)
+                .accessibilityElement(children: .contain)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    if let selectedCustomFileName {
+                        infoRow(
+                            title: "Current image",
+                            value: selectedCustomFileName,
+                            systemImage: "photo"
+                        )
+                        .accessibilityLabel("Current custom image")
+                        .accessibilityValue(selectedCustomFileName)
+                    } else {
+                        infoRow(
+                            title: "Current image",
+                            value: "No custom image selected",
+                            systemImage: "photo"
+                        )
+                    }
+
+                    infoRow(
+                        title: "Allowed files",
+                        value: "Static images such as JPEG, PNG, and HEIC. MOV and MP4 files are rejected.",
+                        systemImage: "checkmark.seal"
+                    )
+                }
+                .frame(maxWidth: 500, alignment: .leading)
+
+                if let customFileError {
+                    inlineError(customFileError)
+                        .frame(maxWidth: 500, alignment: .leading)
+                }
             }
 
-            Button {
-                chooseCustomFile()
-            } label: {
-                Label("Choose Image...", systemImage: "photo.badge.plus")
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.regular)
-            .keyboardShortcut(.defaultAction)
-            .accessibilityHint("Opens a file picker for a custom static wallpaper image.")
-
-            Text("JPEG, PNG, HEIC, and other static image formats can be used. MOV and MP4 files will be rejected.")
+            Text("Files are copied into Sunpaper's application support folder so the wallpaper remains available later.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 430)
-
-            if let customFileError {
-                inlineError(customFileError)
-            }
-
-            Spacer()
+                .frame(maxWidth: 500)
         }
-        .padding(24)
+        .padding(28)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -338,24 +372,35 @@ struct WallpaperGridPicker: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Choose Wallpaper")
-                .font(.title3)
-                .fontWeight(.semibold)
-
-            Text("Select an aerial wallpaper or use a static image from your Mac.")
-                .font(.subheadline)
+        HStack(alignment: .center, spacing: 14) {
+            Image(systemName: "macwindow.on.rectangle")
+                .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(.secondary)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: 34, height: 34)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Choose Wallpaper")
+                    .font(.title3.weight(.semibold))
+
+                Text("Select an aerial wallpaper or use a static image from your Mac.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 12)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
+        .padding(.horizontal, 22)
+        .padding(.top, 18)
+        .padding(.bottom, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var sourceControls: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             Picker("Wallpaper source", selection: $selectedTab) {
                 Text("Aerials").tag(WallpaperPickerTab.aerials)
                 Text("Custom Image").tag(WallpaperPickerTab.custom)
@@ -368,8 +413,8 @@ struct WallpaperGridPicker: View {
                 aerialSearchRow
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 22)
+        .padding(.bottom, 14)
     }
 
     private var aerialSearchRow: some View {
@@ -381,6 +426,7 @@ struct WallpaperGridPicker: View {
             TextField("Search Aerials", text: $searchText)
                 .textFieldStyle(.roundedBorder)
                 .focused($isSearchFocused)
+                .frame(maxWidth: 360)
                 .accessibilityLabel("Search aerial wallpapers")
                 .accessibilityHint("Filters the aerial wallpaper grid.")
 
@@ -395,6 +441,8 @@ struct WallpaperGridPicker: View {
             .disabled(searchText.isEmpty)
             .accessibilityLabel("Clear search")
             .accessibilityHint("Shows all aerial wallpapers.")
+
+            Spacer()
         }
     }
 
@@ -426,8 +474,9 @@ struct WallpaperGridPicker: View {
             .buttonStyle(.bordered)
             .keyboardShortcut(.cancelAction)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 22)
+        .padding(.vertical, 14)
+        .background(.bar)
     }
 
     private var showsFooterReloadButton: Bool {
@@ -499,6 +548,29 @@ struct WallpaperGridPicker: View {
         .accessibilityLabel("Loading aerial wallpapers")
     }
 
+    private func infoRow(title: String, value: String, systemImage: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 18, height: 18)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Text(value)
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
     private func inlineError(_ message: String) -> some View {
         Label {
             Text(message)
@@ -506,10 +578,15 @@ struct WallpaperGridPicker: View {
         } icon: {
             Image(systemName: "exclamationmark.triangle.fill")
         }
-        .font(.caption)
+        .font(.caption.weight(.medium))
         .foregroundStyle(.orange)
         .multilineTextAlignment(.leading)
-        .frame(maxWidth: 430, alignment: .leading)
+        .padding(10)
+        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color.orange.opacity(0.24))
+        }
         .accessibilityLabel("Custom wallpaper error. \(message)")
     }
 
@@ -543,44 +620,68 @@ private struct WallpaperThumbnailCell: View {
 
     var body: some View {
         Button(action: onSelect) {
-            VStack(spacing: 7) {
-                AsyncThumbnail(url: asset.thumbnailURL, size: CGSize(width: 140, height: 80))
-                    .overlay {
-                        if isSelected {
-                            RoundedRectangle(cornerRadius: 6)
-                                .strokeBorder(Color.accentColor, lineWidth: 3)
+            VStack(alignment: .leading, spacing: 8) {
+                ZStack(alignment: .bottomTrailing) {
+                    AsyncThumbnail(url: asset.thumbnailURL, size: CGSize(width: 132, height: 76))
+                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .overlay {
+                            LinearGradient(
+                                colors: [.clear, .black.opacity(0.18)],
+                                startPoint: .center,
+                                endPoint: .bottom
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                         }
-                    }
-                    .overlay(alignment: .bottomTrailing) {
-                        if isSelected {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.white, Color.accentColor)
-                                .padding(4)
-                                .accessibilityHidden(true)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .strokeBorder(.black.opacity(0.08))
                         }
+                        .accessibilityHidden(true)
+
+                    downloadBadge
+
+                    if isSelected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(.white, Color.accentColor)
+                            .padding(6)
+                            .accessibilityHidden(true)
                     }
+                }
+                .frame(width: 132, height: 76)
+                .overlay {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(Color.accentColor, lineWidth: 3)
+                    }
+                }
+                .frame(maxWidth: .infinity)
 
                 Text(asset.displayName)
-                    .font(.caption)
+                    .font(.caption.weight(isSelected ? .semibold : .regular))
                     .lineLimit(2)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(isSelected ? .primary : .secondary)
-                    .frame(height: 32)
+                    .multilineTextAlignment(.leading)
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, minHeight: 32, maxHeight: 32, alignment: .topLeading)
 
-                VStack(spacing: 2) {
+                HStack(spacing: 6) {
                     selectionIndicator
                     downloadStatus
                 }
-                .frame(height: 32)
+                .frame(maxWidth: .infinity, minHeight: 18, maxHeight: 18, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, minHeight: 160)
-            .padding(8)
+            .frame(maxWidth: .infinity, minHeight: 154, maxHeight: 154, alignment: .top)
+            .padding(9)
             .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isSelected ? Color.accentColor.opacity(0.1) :
-                          isHovered ? Color.primary.opacity(0.05) : Color.clear)
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .fill(cellFill)
             )
-            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .strokeBorder(cellStroke, lineWidth: isSelected ? 1.5 : 1)
+            }
+            .shadow(color: .black.opacity(isSelected ? 0.12 : 0), radius: 8, y: 3)
+            .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
@@ -599,13 +700,14 @@ private struct WallpaperThumbnailCell: View {
                 Label("Selected", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(Color.accentColor)
             } else {
-                Text("Selected")
-                    .hidden()
+                Text("Not selected")
+                    .foregroundStyle(.tertiary)
             }
         }
         .font(.caption2)
         .lineLimit(1)
-        .frame(height: 14)
+        .frame(maxWidth: isSelected ? 70 : 0, alignment: .leading)
+        .clipped()
         .accessibilityHidden(true)
     }
 
@@ -615,8 +717,45 @@ private struct WallpaperThumbnailCell: View {
             .foregroundStyle(downloadState.foregroundColor)
             .lineLimit(1)
             .minimumScaleFactor(0.8)
-            .frame(height: 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private var downloadBadge: some View {
+        if downloadState != .downloaded || isHovered {
+            Image(systemName: downloadState.systemImage)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(downloadState == .unavailable ? .orange : .white)
+                .padding(5)
+                .background(.black.opacity(downloadState == .unavailable ? 0.48 : 0.42), in: Circle())
+                .padding(6)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private var cellFill: AnyShapeStyle {
+        if isSelected {
+            return AnyShapeStyle(Color.accentColor.opacity(0.14))
+        }
+
+        if isHovered {
+            return AnyShapeStyle(.regularMaterial)
+        }
+
+        return AnyShapeStyle(Color.primary.opacity(0.035))
+    }
+
+    private var cellStroke: Color {
+        if isSelected {
+            return Color.accentColor.opacity(0.75)
+        }
+
+        if isHovered {
+            return Color.primary.opacity(0.16)
+        }
+
+        return Color.primary.opacity(0.08)
     }
 
     private var accessibilityValue: String {

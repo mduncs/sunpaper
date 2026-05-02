@@ -13,51 +13,53 @@ struct MenuBarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             statusSummary
-                .padding(.horizontal, 12)
+                .padding(.horizontal, 10)
                 .padding(.top, 10)
-                .padding(.bottom, 8)
+                .padding(.bottom, 9)
 
             if let error = lastError {
                 ErrorStatusView(error: error, onOpenSettings: onOpenSettings)
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 8)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 9)
             }
 
             Divider()
 
             scheduleSection
-                .padding(.horizontal, 8)
+                .padding(.horizontal, 10)
                 .padding(.vertical, 8)
 
             Divider()
 
             commandSection
-                .padding(.horizontal, 8)
+                .padding(.horizontal, 10)
                 .padding(.vertical, 6)
         }
-        .frame(width: 280)
+        .frame(width: 328)
     }
 
     private var statusSummary: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 8) {
-                Image(systemName: currentSlot.map(slotIcon) ?? "clock")
-                    .font(.title3)
-                    .foregroundStyle(currentSlot.map(slotColor) ?? .secondary)
-                    .frame(width: 22)
-                    .accessibilityHidden(true)
+                PhaseIconTile(slot: currentSlot, isDownloading: isDownloading)
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Current")
-                        .font(.caption2)
-                        .fontWeight(.medium)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Current Slot")
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
+                        .textCase(.uppercase)
                         .accessibilityHidden(true)
 
                     Text(currentSlot?.name ?? "No active slot")
-                        .font(.headline)
+                        .font(.system(.headline, design: .default, weight: .semibold))
                         .lineLimit(1)
                         .minimumScaleFactor(0.82)
+
+                    Text(currentSlot.map(slotWallpaperDescription) ?? "Waiting for a scheduled wallpaper")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
 
                 Spacer(minLength: 8)
@@ -65,19 +67,7 @@ struct MenuBarView: View {
                 StatusBadge(status: popoverStatus)
             }
 
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: "arrow.forward.circle")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 22)
-                    .accessibilityHidden(true)
-
-                Text(nextTransitionText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            NextTransitionRow(nextTransition: nextTransition)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Sunpaper status")
@@ -98,7 +88,7 @@ struct MenuBarView: View {
                 if !todaySchedule.isEmpty {
                     Text("\(todaySchedule.count) slots")
                         .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                         .accessibilityHidden(true)
                 }
             }
@@ -125,6 +115,7 @@ struct MenuBarView: View {
             MenuCommandButton(
                 title: "Quit Sunpaper",
                 systemImage: "power",
+                role: .destructive,
                 accessibilityLabel: "Quit Sunpaper",
                 accessibilityHint: "Exits Sunpaper.",
                 action: onQuit
@@ -178,15 +169,7 @@ struct MenuBarView: View {
     }
 
     private var scheduleListMaxHeight: CGFloat {
-        CGFloat(maxVisibleScheduleRows * 30)
-    }
-
-    private var nextTransitionText: String {
-        guard let nextTransition else {
-            return "Next: No more transitions today"
-        }
-
-        return "Next: \(nextTransition.slot.name) at \(formatScheduleTime(nextTransition.date))"
+        CGFloat(maxVisibleScheduleRows * 32)
     }
 
     private var statusAccessibilityValue: String {
@@ -206,6 +189,87 @@ struct MenuBarView: View {
     }
 }
 
+private struct PhaseIconTile: View {
+    let slot: TimeSlot?
+    let isDownloading: Bool
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            RoundedRectangle(cornerRadius: 7)
+                .fill(tint.opacity(0.14))
+
+            Image(systemName: slot.map(slotIcon) ?? "clock")
+                .font(.system(size: 19, weight: .semibold))
+                .foregroundStyle(tint)
+
+            if isDownloading {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(.accentColor)
+                    .scaleEffect(0.48)
+                    .frame(width: 12, height: 12)
+                    .background(.background, in: Circle())
+                    .offset(x: 2, y: 2)
+                    .accessibilityHidden(true)
+            }
+        }
+        .frame(width: 38, height: 38)
+        .accessibilityHidden(true)
+    }
+
+    private var tint: Color {
+        slot.map(slotColor) ?? .secondary
+    }
+}
+
+private struct NextTransitionRow: View {
+    let nextTransition: (slot: TimeSlot, date: Date)?
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 7) {
+            Image(systemName: nextTransition == nil ? "checkmark.circle" : "arrow.forward.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+                .accessibilityHidden(true)
+
+            Text("Next")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Text(nextText)
+                .font(.caption)
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 26)
+        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 6))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Next transition")
+        .accessibilityValue(accessibilityValue)
+    }
+
+    private var nextText: String {
+        guard let nextTransition else {
+            return "No more transitions today"
+        }
+
+        return "\(nextTransition.slot.name) at \(formatScheduleTime(nextTransition.date))"
+    }
+
+    private var accessibilityValue: String {
+        guard let nextTransition else {
+            return "No more transitions today"
+        }
+
+        return "\(nextTransition.slot.name) at \(formatScheduleTime(nextTransition.date))"
+    }
+}
+
 private enum MenuBarPopoverStatus: Equatable {
     case ready
     case waiting
@@ -217,11 +281,11 @@ private enum MenuBarPopoverStatus: Equatable {
         case .ready:
             return "Ready"
         case .waiting:
-            return "Waiting"
+            return "Idle"
         case .downloading:
-            return "Downloading"
+            return "Syncing"
         case .attention:
-            return "Attention"
+            return "Issue"
         }
     }
 
@@ -270,11 +334,11 @@ private struct StatusBadge: View {
             }
 
             Text(status.title)
+                .lineLimit(1)
         }
-        .font(.caption2)
-        .fontWeight(.medium)
+        .font(.system(size: 11, weight: .semibold))
         .foregroundStyle(status.tint)
-        .padding(.horizontal, 7)
+        .padding(.horizontal, 8)
         .padding(.vertical, 3)
         .background(status.tint.opacity(0.12), in: Capsule())
         .accessibilityHidden(true)
@@ -286,23 +350,23 @@ private struct ErrorStatusView: View {
     let onOpenSettings: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 7) {
+        HStack(alignment: .top, spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.caption)
                 .foregroundStyle(.orange)
-                .frame(width: 16)
+                .frame(width: 18)
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 5) {
-                Text("Needs attention")
-                    .font(.caption2)
+                Text("Needs Attention")
+                    .font(.caption)
                     .fontWeight(.semibold)
                     .foregroundStyle(.primary)
 
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(3)
+                    .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
 
                 Button(action: onOpenSettings) {
@@ -315,7 +379,7 @@ private struct ErrorStatusView: View {
                 .accessibilityHint("Opens Sunpaper settings.")
             }
         }
-        .padding(8)
+        .padding(9)
         .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
         .overlay(
             RoundedRectangle(cornerRadius: 6)
@@ -350,7 +414,7 @@ private struct EmptyScheduleView: View {
                 .accessibilityHint("Configure scheduled wallpaper changes.")
         }
         .padding(.horizontal, 6)
-        .frame(height: 30)
+        .frame(height: 32)
         .accessibilityElement(children: .contain)
     }
 }
@@ -367,52 +431,7 @@ struct ScheduleSlotButton: View {
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 7) {
-                Text(formatScheduleTime(time))
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 52, alignment: .leading)
-
-                Image(systemName: slotIcon(slot))
-                    .font(.caption)
-                    .foregroundStyle(slotColor(slot))
-                    .frame(width: 16)
-                    .accessibilityHidden(true)
-
-                Text(slot.name)
-                    .font(.subheadline)
-                    .foregroundStyle(isCurrent ? .primary : .secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-                    .truncationMode(.tail)
-
-                Spacer(minLength: 8)
-
-                if isCurrent {
-                    Text("Current")
-                        .font(.caption2)
-                        .fontWeight(.medium)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Color.secondary.opacity(0.12), in: Capsule())
-                        .accessibilityHidden(true)
-                } else {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .opacity(isHovered ? 0.85 : 0.32)
-                        .accessibilityHidden(true)
-                }
-            }
-            .padding(.horizontal, 8)
-            .frame(height: 28)
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(isCurrent ? Color.accentColor.opacity(0.1) :
-                          isHovered ? Color.primary.opacity(0.08) : Color.clear)
-            )
-            .contentShape(Rectangle())
+            rowContent
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
@@ -423,6 +442,83 @@ struct ScheduleSlotButton: View {
         .onHover { hovering in
             isHovered = hovering
         }
+    }
+
+    private var rowContent: some View {
+        HStack(spacing: 7) {
+            Text(formatScheduleTime(time))
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(timeColor)
+                .frame(width: 54, alignment: .leading)
+
+            phaseDot
+
+            Text(slot.name)
+                .font(.subheadline)
+                .fontWeight(isCurrent ? .semibold : .regular)
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .truncationMode(.tail)
+
+            Spacer(minLength: 8)
+
+            trailingAccessory
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 30)
+        .background(rowBackgroundShape)
+        .contentShape(Rectangle())
+    }
+
+    private var phaseDot: some View {
+        ZStack {
+            Circle()
+                .fill(slotColor(slot).opacity(isCurrent ? 0.18 : 0.12))
+
+            Image(systemName: slotIcon(slot))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(slotColor(slot))
+                .accessibilityHidden(true)
+        }
+        .frame(width: 20, height: 20)
+    }
+
+    @ViewBuilder
+    private var trailingAccessory: some View {
+        if isCurrent {
+            Text("Current")
+                .font(.caption2)
+                .fontWeight(.semibold)
+                .foregroundStyle(Color.accentColor)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.accentColor.opacity(0.12), in: Capsule())
+                .accessibilityHidden(true)
+        } else {
+            Image(systemName: "arrow.down.left.circle")
+                .font(.caption2)
+                .foregroundStyle(Color.accentColor)
+                .opacity(isHovered ? 0.85 : 0)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private var rowBackgroundShape: some View {
+        RoundedRectangle(cornerRadius: 4)
+            .fill(rowBackground)
+    }
+
+    private var timeColor: Color {
+        isCurrent ? .primary : .secondary
+    }
+
+    private var rowBackground: Color {
+        if isCurrent {
+            return Color.accentColor.opacity(isHovered ? 0.14 : 0.1)
+        }
+
+        return isHovered ? Color.primary.opacity(0.07) : Color.clear
     }
 
     private var accessibilityLabel: String {
@@ -439,18 +535,14 @@ struct ScheduleSlotButton: View {
     }
 
     private var wallpaperDescription: String {
-        switch slot.source {
-        case .none:
-            return "No wallpaper assigned"
-        default:
-            return "Wallpaper: \(slot.source.displayName)"
-        }
+        slotWallpaperDescription(slot)
     }
 }
 
 private struct MenuCommandButton: View {
     let title: String
     let systemImage: String
+    var role: ButtonRole? = nil
     let accessibilityLabel: String
     let accessibilityHint: String
     let action: () -> Void
@@ -458,7 +550,7 @@ private struct MenuCommandButton: View {
     @State private var isHovered = false
 
     var body: some View {
-        Button(action: action) {
+        Button(role: role, action: action) {
             HStack(spacing: 8) {
                 Image(systemName: systemImage)
                     .font(.subheadline)
@@ -470,17 +562,23 @@ private struct MenuCommandButton: View {
                     .minimumScaleFactor(0.9)
 
                 Spacer(minLength: 8)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .opacity(isHovered ? 1 : 0)
+                    .accessibilityHidden(true)
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 8)
-        .frame(height: 28)
+        .frame(height: 30)
         .background(
             RoundedRectangle(cornerRadius: 4)
                 .fill(isHovered ? Color.primary.opacity(0.08) : Color.clear)
         )
-        .foregroundStyle(.primary)
+        .foregroundStyle(role == .destructive ? .red : .primary)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityHint(accessibilityHint)
         .onHover { hovering in
@@ -522,6 +620,15 @@ private func slotColor(_ slot: TimeSlot) -> Color {
     }
 
     return .secondary
+}
+
+private func slotWallpaperDescription(_ slot: TimeSlot) -> String {
+    switch slot.source {
+    case .none:
+        return "No wallpaper assigned"
+    default:
+        return slot.source.displayName
+    }
 }
 
 private func formatScheduleTime(_ date: Date) -> String {

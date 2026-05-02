@@ -2,8 +2,106 @@ import SwiftUI
 import CoreLocation
 import ServiceManagement
 
+private enum SettingsDesign {
+    enum Spacing {
+        static let xxs: CGFloat = 4
+        static let xs: CGFloat = 6
+        static let sm: CGFloat = 8
+        static let md: CGFloat = 12
+        static let lg: CGFloat = 16
+        static let xl: CGFloat = 20
+        static let xxl: CGFloat = 24
+        static let xxxl: CGFloat = 32
+    }
+
+    enum Radius {
+        static let control: CGFloat = 8
+        static let smallCard: CGFloat = 12
+        static let card: CGFloat = 18
+        static let largeCard: CGFloat = 24
+    }
+
+    enum Sizing {
+        static let iconTile: CGFloat = 42
+        static let smallIconTile: CGFloat = 34
+        static let rowMinHeight: CGFloat = 62
+        static let settingsMaxWidth: CGFloat = 820
+        static let settingsIdealWidth: CGFloat = 860
+        static let settingsMinWidth: CGFloat = 720
+        static let settingsIdealHeight: CGFloat = 640
+        static let settingsMinHeight: CGFloat = 540
+    }
+
+    enum Color {
+        static let sunrise = SwiftUI.Color(red: 1.00, green: 0.40, blue: 0.30)
+        static let sunset = SwiftUI.Color(red: 1.00, green: 0.54, blue: 0.22)
+        static let day = SwiftUI.Color(red: 1.00, green: 0.78, blue: 0.10)
+        static let sky = SwiftUI.Color(red: 0.30, green: 0.55, blue: 1.00)
+        static let twilight = SwiftUI.Color(red: 0.48, green: 0.38, blue: 1.00)
+        static let night = SwiftUI.Color(red: 0.28, green: 0.25, blue: 0.78)
+        static let success = SwiftUI.Color(red: 0.35, green: 0.75, blue: 0.35)
+        static let warning = SwiftUI.Color(red: 1.00, green: 0.68, blue: 0.15)
+        static let danger = SwiftUI.Color.red
+    }
+}
+
+private enum SettingsPhase {
+    case morning
+    case day
+    case evening
+    case night
+    case fixed
+
+    var symbolName: String {
+        switch self {
+        case .morning: return "sunrise.fill"
+        case .day: return "sun.max.fill"
+        case .evening: return "sunset.fill"
+        case .night: return "moon.stars.fill"
+        case .fixed: return "clock.fill"
+        }
+    }
+
+    var colors: (SwiftUI.Color, SwiftUI.Color) {
+        switch self {
+        case .morning: return (SettingsDesign.Color.sunrise, .pink)
+        case .day: return (SettingsDesign.Color.day, SettingsDesign.Color.sunset)
+        case .evening: return (SettingsDesign.Color.sunset, SettingsDesign.Color.twilight)
+        case .night: return (SettingsDesign.Color.twilight, SettingsDesign.Color.night)
+        case .fixed: return (SettingsDesign.Color.sky, .cyan)
+        }
+    }
+
+    static func infer(slotName: String, trigger: Trigger) -> SettingsPhase {
+        let name = slotName.lowercased()
+        if name.contains("morning") || name.contains("dawn") || name.contains("sunrise") {
+            return .morning
+        }
+        if name.contains("day") || name.contains("noon") || name.contains("afternoon") {
+            return .day
+        }
+        if name.contains("evening") || name.contains("dusk") || name.contains("sunset") {
+            return .evening
+        }
+        if name.contains("night") || name.contains("dark") {
+            return .night
+        }
+
+        switch trigger {
+        case .solar(let event, _):
+            switch event {
+            case .sunrise, .civilDawn: return .morning
+            case .solarNoon: return .day
+            case .sunset, .civilDusk: return .evening
+            }
+        case .fixed:
+            return .fixed
+        }
+    }
+}
+
 struct SettingsView: View {
-    private enum SettingsPane: Hashable {
+    fileprivate enum SettingsPane: Hashable {
         case schedule
         case wallpapers
         case general
@@ -18,6 +116,17 @@ struct SettingsView: View {
                 return "General"
             }
         }
+
+        var systemImage: String {
+            switch self {
+            case .schedule:
+                return "sun.max.fill"
+            case .wallpapers:
+                return "photo.on.rectangle.angled"
+            case .general:
+                return "gearshape"
+            }
+        }
     }
 
     @StateObject private var viewModel = SettingsViewModel()
@@ -26,30 +135,35 @@ struct SettingsView: View {
     @State private var selectedPane: SettingsPane = .schedule
 
     var body: some View {
-        TabView(selection: $selectedPane) {
-            schedulePane
-                .tabItem {
-                    Label("Schedule", systemImage: "calendar")
-                }
-                .tag(SettingsPane.schedule)
-                .accessibilityIdentifier("scheduleSettingsPane")
+        VStack(spacing: 0) {
+            SettingsHeader(selectedPane: $selectedPane)
 
-            wallpapersPane
-                .tabItem {
-                    Label("Wallpapers", systemImage: "photo.on.rectangle")
-                }
-                .tag(SettingsPane.wallpapers)
-                .accessibilityIdentifier("wallpapersSettingsPane")
+            Divider()
+                .opacity(0.45)
 
-            generalPane
-                .tabItem {
-                    Label("General", systemImage: "gearshape")
+            Group {
+                switch selectedPane {
+                case .schedule:
+                    schedulePane
+                        .accessibilityIdentifier("scheduleSettingsPane")
+                case .wallpapers:
+                    wallpapersPane
+                        .accessibilityIdentifier("wallpapersSettingsPane")
+                case .general:
+                    generalPane
+                        .accessibilityIdentifier("generalSettingsPane")
                 }
-                .tag(SettingsPane.general)
-                .accessibilityIdentifier("generalSettingsPane")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(minWidth: 520, idealWidth: 560, minHeight: 480, idealHeight: 600)
-        .navigationTitle(selectedPane.title)
+        .frame(
+            minWidth: SettingsDesign.Sizing.settingsMinWidth,
+            idealWidth: SettingsDesign.Sizing.settingsIdealWidth,
+            minHeight: SettingsDesign.Sizing.settingsMinHeight,
+            idealHeight: SettingsDesign.Sizing.settingsIdealHeight
+        )
+        .background(SettingsWindowBackground())
+        .navigationTitle("Sunpaper Settings")
         .accessibilityIdentifier("settingsView")
         .sheet(isPresented: $showingLocationPicker) {
             LocationPickerView(
@@ -65,15 +179,42 @@ struct SettingsView: View {
 
     private var schedulePane: some View {
         SettingsPaneContainer {
-            SettingsSection("Location") {
-                locationSection
+            SettingsCard(
+                title: "Sun Position",
+                subtitle: "Location and tracking determine when wallpaper slots run.",
+                systemImage: "sun.and.horizon.fill",
+                tint: SettingsDesign.Color.sunset
+            ) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: SettingsDesign.Spacing.xl) {
+                        locationSection
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                        Divider()
+                        solarTrackingSection
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
+
+                    VStack(alignment: .leading, spacing: SettingsDesign.Spacing.lg) {
+                        locationSection
+                        Divider()
+                        solarTrackingSection
+                    }
+                }
             }
 
-            SettingsSection("Tracking") {
-                solarTrackingSection
-            }
-
-            SettingsSection("Today's Schedule") {
+            SettingsCard(
+                title: "Today's Schedule",
+                subtitle: scheduleCardSubtitle,
+                systemImage: "calendar.badge.clock",
+                tint: scheduleCardTint,
+                trailing: {
+                    SettingsStatusChip(
+                        title: scheduleStatusTitle,
+                        systemImage: scheduleStatusIcon,
+                        tint: scheduleCardTint
+                    )
+                }
+            ) {
                 scheduleSection
             }
         }
@@ -82,43 +223,79 @@ struct SettingsView: View {
     private var wallpapersPane: some View {
         SettingsPaneContainer {
             if !viewModel.config.enableSolarTracking {
-                EmptySettingsState(
+                SettingsCard(
                     title: "Solar Tracking Is Off",
-                    systemImage: "sun.horizon",
-                    message: "Wallpaper slots are inactive until solar tracking is turned on."
+                    subtitle: "Wallpaper slots are inactive until tracking is turned on.",
+                    systemImage: "pause.circle.fill",
+                    tint: SettingsDesign.Color.warning
                 ) {
-                    Button("Turn On") {
-                        viewModel.config.enableSolarTracking = true
+                    HStack(alignment: .center, spacing: SettingsDesign.Spacing.md) {
+                        Text("Turn on solar tracking to edit and run wallpaper slots.")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+
+                        Spacer(minLength: SettingsDesign.Spacing.md)
+
+                        Button("Turn On") {
+                            viewModel.config.enableSolarTracking = true
+                        }
+                        .keyboardShortcut(.defaultAction)
+                        .accessibilityIdentifier("turnOnSolarTrackingButton")
                     }
-                    .keyboardShortcut(.defaultAction)
-                    .accessibilityIdentifier("turnOnSolarTrackingButton")
                 }
                 .accessibilityIdentifier("solarTrackingOffState")
             }
 
-            SettingsSection("Display Assignment") {
+            SettingsCard(
+                title: "Display Assignment",
+                subtitle: displayModeDescription,
+                systemImage: "display.2",
+                tint: SettingsDesign.Color.sky
+            ) {
                 displayModeSection
             }
             .disabled(!viewModel.config.enableSolarTracking)
+            .opacity(viewModel.config.enableSolarTracking ? 1 : 0.58)
 
-            SettingsSection("Time Slots") {
+            SettingsCard(
+                title: "Time Slots",
+                subtitle: timeSlotCardSubtitle,
+                systemImage: "photo.stack",
+                tint: SettingsDesign.Color.twilight
+            ) {
                 timeSlotsSection
             }
             .disabled(!viewModel.config.enableSolarTracking)
+            .opacity(viewModel.config.enableSolarTracking ? 1 : 0.58)
         }
     }
 
     private var generalPane: some View {
         SettingsPaneContainer {
-            SettingsSection("Startup") {
+            SettingsCard(
+                title: "Startup",
+                subtitle: "Choose how Sunpaper starts with macOS.",
+                systemImage: "paperplane.fill",
+                tint: SettingsDesign.Color.sky
+            ) {
                 launchAtLoginSection
             }
 
-            SettingsSection("About") {
+            SettingsCard(
+                title: "About",
+                subtitle: "App version and build details.",
+                systemImage: "sun.horizon.fill",
+                tint: SettingsDesign.Color.sunset
+            ) {
                 aboutSection
             }
 
-            SettingsSection("Reset") {
+            SettingsCard(
+                title: "Reset",
+                subtitle: "Restore default scheduling settings.",
+                systemImage: "arrow.counterclockwise",
+                tint: SettingsDesign.Color.danger
+            ) {
                 resetSection
             }
         }
@@ -127,32 +304,38 @@ struct SettingsView: View {
     // MARK: - Sections
 
     private var locationSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SettingsControlRow(
-                title: "Current Location",
-                help: "Used to calculate sunrise, sunset, and solar noon."
-            ) {
-                HStack(spacing: 8) {
-                    Image(systemName: hasLocation ? "location.fill" : "location")
-                        .foregroundColor(hasLocation ? .blue : .secondary)
-                        .accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: SettingsDesign.Spacing.md) {
+            HStack(alignment: .center, spacing: SettingsDesign.Spacing.md) {
+                SettingsIconTile(
+                    systemImage: hasLocation ? "location.fill" : "location",
+                    tint: hasLocation ? SettingsDesign.Color.sky : .secondary,
+                    size: SettingsDesign.Sizing.smallIconTile
+                )
 
+                VStack(alignment: .leading, spacing: SettingsDesign.Spacing.xxs) {
+                    Text("Current Location")
+                        .font(.system(size: 13, weight: .semibold))
                     Text(locationDisplayName)
-                        .lineLimit(1)
+                        .font(.system(size: 13))
                         .foregroundColor(hasLocation ? .primary : .secondary)
+                        .lineLimit(1)
                         .accessibilityLabel("Current location")
                         .accessibilityValue(locationDisplayName)
-
-                    Spacer(minLength: 8)
-
-                    Button(hasLocation ? "Change..." : "Set Location...") {
-                        showingLocationPicker = true
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityLabel(hasLocation ? "Change location" : "Set location")
-                    .accessibilityHint("Opens location search.")
-                    .accessibilityIdentifier("changeLocationButton")
+                    Text("Used to calculate sunrise, sunset, and solar noon.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+
+                Spacer(minLength: SettingsDesign.Spacing.md)
+
+                Button(hasLocation ? "Change..." : "Set Location...") {
+                    showingLocationPicker = true
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel(hasLocation ? "Change location" : "Set location")
+                .accessibilityHint("Opens location search.")
+                .accessibilityIdentifier("changeLocationButton")
             }
             .accessibilityIdentifier("currentLocationRow")
 
@@ -172,17 +355,28 @@ struct SettingsView: View {
     }
 
     private var solarTrackingSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Toggle("Solar Tracking", isOn: $viewModel.config.enableSolarTracking)
-                .accessibilityLabel("Solar tracking")
-                .accessibilityValue(viewModel.config.enableSolarTracking ? "On" : "Off")
-                .accessibilityHint("Turns automatic wallpaper changes based on sun position on or off.")
-                .accessibilityIdentifier("solarTrackingToggle")
+        VStack(alignment: .leading, spacing: SettingsDesign.Spacing.md) {
+            HStack(alignment: .top, spacing: SettingsDesign.Spacing.md) {
+                SettingsIconTile(
+                    systemImage: viewModel.config.enableSolarTracking ? "sun.max.fill" : "sun.max",
+                    tint: viewModel.config.enableSolarTracking ? SettingsDesign.Color.day : .secondary,
+                    size: SettingsDesign.Sizing.smallIconTile
+                )
 
-            Text("Switch wallpapers at sunrise, sunset, solar noon, or a fixed time.")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: SettingsDesign.Spacing.xs) {
+                    Toggle("Solar Tracking", isOn: $viewModel.config.enableSolarTracking)
+                        .font(.system(size: 13, weight: .semibold))
+                        .accessibilityLabel("Solar tracking")
+                        .accessibilityValue(viewModel.config.enableSolarTracking ? "On" : "Off")
+                        .accessibilityHint("Turns automatic wallpaper changes based on sun position on or off.")
+                        .accessibilityIdentifier("solarTrackingToggle")
+
+                    Text("Switch wallpapers at sunrise, sunset, solar noon, or a fixed time.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
 
             if !hasLocation {
                 StatusMessage(
@@ -195,7 +389,7 @@ struct SettingsView: View {
     }
 
     private var displayModeSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: SettingsDesign.Spacing.lg) {
             SettingsControlRow(
                 title: "Mode",
                 help: displayModeDescription
@@ -219,19 +413,17 @@ struct SettingsView: View {
     }
 
     private var timeSlotsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: SettingsDesign.Spacing.md) {
             if viewModel.config.displayMode == .allDisplays {
-                // All displays mode - show single slot list
                 allDisplaysSlotsView
             } else {
-                // Per-display mode - show tabbed interface
                 perDisplaySlotsView
             }
         }
     }
 
     private var allDisplaysSlotsView: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: SettingsDesign.Spacing.md) {
             HStack(alignment: .firstTextBaseline) {
                 Text("\(viewModel.config.slots.count) \(viewModel.config.slots.count == 1 ? "slot" : "slots")")
                     .font(.subheadline)
@@ -268,7 +460,7 @@ struct SettingsView: View {
     }
 
     private var perDisplaySlotsView: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: SettingsDesign.Spacing.md) {
             if viewModel.displays.isEmpty {
                 EmptySettingsState(
                     title: "No Displays Detected",
@@ -302,10 +494,10 @@ struct SettingsView: View {
     private func displaySlotsEditor(for display: DisplayManager.Display) -> some View {
         let displaySlots = viewModel.getDisplaySlots(for: display.uuid)
 
-        return VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: SettingsDesign.Spacing.md) {
             HStack(alignment: .firstTextBaseline) {
                 Label(display.displayName, systemImage: display.isPrimary ? "desktopcomputer" : "display")
-                    .font(.subheadline)
+                    .font(.system(size: 13, weight: .semibold))
                     .labelStyle(.titleAndIcon)
 
                 Spacer(minLength: 12)
@@ -341,7 +533,7 @@ struct SettingsView: View {
     }
 
     private var scheduleSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: SettingsDesign.Spacing.md) {
             let scheduleItems = viewModel.visibleTodaySchedule
             let visibleCurrentSlot = viewModel.visibleCurrentSlot
 
@@ -372,7 +564,7 @@ struct SettingsView: View {
                 )
                 .accessibilityIdentifier("emptyScheduleState")
             } else {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: SettingsDesign.Spacing.sm) {
                     if let context = viewModel.scheduleContextDescription {
                         Text(context)
                             .font(.caption)
@@ -380,28 +572,11 @@ struct SettingsView: View {
                     }
 
                     ForEach(scheduleItems, id: \.slot.id) { item in
-                        HStack(alignment: .firstTextBaseline, spacing: 10) {
-                            Text(formatTime(item.time))
-                                .font(.system(.body, design: .monospaced))
-                                .monospacedDigit()
-                                .frame(width: 74, alignment: .leading)
-
-                            Text(item.slot.name)
-                                .lineLimit(1)
-
-                            if item.slot.id == visibleCurrentSlot?.id {
-                                Text("Current")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(.quaternary, in: Capsule())
-                            }
-
-                            Spacer()
-                        }
-                        .padding(.vertical, 2)
-                        .accessibilityElement(children: .combine)
+                        TodayScheduleRow(
+                            slot: item.slot,
+                            timeText: formatTime(item.time),
+                            isCurrent: item.slot.id == visibleCurrentSlot?.id
+                        )
                         .accessibilityLabel(scheduleAccessibilityLabel(for: item, currentSlot: visibleCurrentSlot))
                     }
                 }
@@ -412,8 +587,9 @@ struct SettingsView: View {
     }
 
     private var launchAtLoginSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: SettingsDesign.Spacing.sm) {
             Toggle("Open at Login", isOn: $viewModel.launchAtLogin)
+                .font(.system(size: 13, weight: .semibold))
                 .accessibilityLabel("Launch at login")
                 .accessibilityValue(viewModel.launchAtLogin ? "Enabled" : "Disabled")
                 .accessibilityHint("Opens Sunpaper automatically when you sign in.")
@@ -439,7 +615,7 @@ struct SettingsView: View {
     }
 
     private var resetSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: SettingsDesign.Spacing.md) {
             Text("Restore the default slots and clear custom schedule settings. Your selected location is reset as part of the default configuration.")
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -449,7 +625,7 @@ struct SettingsView: View {
                 Button(role: .destructive) {
                     showingResetConfirmation = true
                 } label: {
-                    Text("Reset Settings...")
+                    Label("Reset Settings...", systemImage: "arrow.counterclockwise")
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -471,7 +647,7 @@ struct SettingsView: View {
     }
 
     private var connectedDisplaysList: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: SettingsDesign.Spacing.sm) {
             if viewModel.displays.isEmpty {
                 Text("No displays detected")
                     .font(.caption)
@@ -527,6 +703,52 @@ struct SettingsView: View {
         return "Not Set"
     }
 
+    private var scheduleCardSubtitle: String {
+        if !viewModel.config.enableSolarTracking {
+            return "Tracking is paused."
+        }
+        if !hasLocation {
+            return "Set a location to calculate today's solar events."
+        }
+        if let context = viewModel.scheduleContextDescription {
+            return context
+        }
+        return "Resolved from your enabled wallpaper slots."
+    }
+
+    private var scheduleStatusTitle: String {
+        if !viewModel.config.enableSolarTracking { return "Paused" }
+        if !hasLocation { return "Location Needed" }
+        if viewModel.visibleTodaySchedule.isEmpty { return "No Slots" }
+        return "Ready"
+    }
+
+    private var scheduleStatusIcon: String {
+        if !viewModel.config.enableSolarTracking { return "pause.circle.fill" }
+        if !hasLocation { return "location.slash.fill" }
+        if viewModel.visibleTodaySchedule.isEmpty { return "clock.badge.exclamationmark" }
+        return "checkmark.circle.fill"
+    }
+
+    private var scheduleCardTint: Color {
+        if !viewModel.config.enableSolarTracking || viewModel.visibleTodaySchedule.isEmpty {
+            return SettingsDesign.Color.warning
+        }
+        if !hasLocation {
+            return .secondary
+        }
+        return SettingsDesign.Color.success
+    }
+
+    private var timeSlotCardSubtitle: String {
+        switch viewModel.config.displayMode {
+        case .allDisplays:
+            return "A shared schedule applies to every connected display."
+        case .perDisplay:
+            return "Edit the schedule for one display at a time."
+        }
+    }
+
     private var hasLocation: Bool {
         viewModel.config.latitude != nil && viewModel.config.longitude != nil
     }
@@ -549,6 +771,96 @@ struct SettingsView: View {
 
 // MARK: - Settings Layout
 
+private struct SettingsWindowBackground: View {
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    SettingsDesign.Color.sky.opacity(0.14),
+                    SettingsDesign.Color.sunrise.opacity(0.10),
+                    SettingsDesign.Color.twilight.opacity(0.12)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            Rectangle()
+                .fill(.ultraThinMaterial)
+        }
+        .ignoresSafeArea()
+    }
+}
+
+private struct SettingsHeader: View {
+    @Binding var selectedPane: SettingsView.SettingsPane
+
+    private let panes: [SettingsView.SettingsPane] = [.schedule, .wallpapers, .general]
+
+    var body: some View {
+        HStack(spacing: SettingsDesign.Spacing.xl) {
+            HStack(spacing: SettingsDesign.Spacing.md) {
+                SettingsIconTile(
+                    systemImage: "sun.horizon.fill",
+                    tint: SettingsDesign.Color.sunset,
+                    size: 36
+                )
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Sunpaper")
+                        .font(.system(size: 17, weight: .semibold))
+                    Text("Settings")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(minWidth: 190, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Sunpaper Settings")
+
+            Spacer(minLength: SettingsDesign.Spacing.lg)
+
+            HStack(spacing: SettingsDesign.Spacing.xs) {
+                ForEach(panes, id: \.self) { pane in
+                    Button {
+                        selectedPane = pane
+                    } label: {
+                        Label(pane.title, systemImage: pane.systemImage)
+                            .font(.system(size: 13, weight: selectedPane == pane ? .semibold : .regular))
+                            .labelStyle(.titleAndIcon)
+                            .padding(.horizontal, SettingsDesign.Spacing.md)
+                            .frame(height: 32)
+                            .frame(minWidth: 108)
+                            .foregroundStyle(selectedPane == pane ? SettingsDesign.Color.sunset : .primary)
+                            .background {
+                                if selectedPane == pane {
+                                    Capsule(style: .continuous)
+                                        .fill(.regularMaterial)
+                                        .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 3)
+                                }
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .contentShape(Capsule(style: .continuous))
+                    .accessibilityLabel(pane.title)
+                    .accessibilityValue(selectedPane == pane ? "Selected" : "Not selected")
+                    .accessibilityHint("Shows the \(pane.title.lowercased()) settings pane.")
+                }
+            }
+            .padding(4)
+            .background(.thinMaterial, in: Capsule(style: .continuous))
+            .overlay {
+                Capsule(style: .continuous)
+                    .strokeBorder(.white.opacity(0.28), lineWidth: 1)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Settings sections")
+        }
+        .padding(.leading, 94)
+        .padding(.trailing, SettingsDesign.Spacing.xxl)
+        .frame(height: 64)
+    }
+}
+
 private struct SettingsPaneContainer<Content: View>: View {
     let content: Content
 
@@ -561,33 +873,85 @@ private struct SettingsPaneContainer<Content: View>: View {
             VStack(alignment: .leading, spacing: 22) {
                 content
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 22)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(SettingsDesign.Spacing.xxl)
+            .frame(maxWidth: SettingsDesign.Sizing.settingsMaxWidth, alignment: .top)
+            .frame(maxWidth: .infinity, alignment: .top)
         }
     }
 }
 
-private struct SettingsSection<Content: View>: View {
+private struct SettingsCard<Content: View, Trailing: View>: View {
     let title: String
+    let subtitle: String?
+    let systemImage: String
+    let tint: Color
+    let trailing: Trailing
     let content: Content
 
-    init(_ title: String, @ViewBuilder content: () -> Content) {
+    init(
+        title: String,
+        subtitle: String? = nil,
+        systemImage: String,
+        tint: Color,
+        @ViewBuilder trailing: () -> Trailing,
+        @ViewBuilder content: () -> Content
+    ) {
         self.title = title
+        self.subtitle = subtitle
+        self.systemImage = systemImage
+        self.tint = tint
+        self.trailing = trailing()
         self.content = content()
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.headline)
-                .accessibilityAddTraits(.isHeader)
+        VStack(alignment: .leading, spacing: SettingsDesign.Spacing.lg) {
+            HStack(alignment: .top, spacing: SettingsDesign.Spacing.md) {
+                SettingsIconTile(systemImage: systemImage, tint: tint)
 
-            VStack(alignment: .leading, spacing: 12) {
-                content
+                VStack(alignment: .leading, spacing: SettingsDesign.Spacing.xxs) {
+                    Text(title)
+                        .font(.system(size: 17, weight: .semibold))
+                        .accessibilityAddTraits(.isHeader)
+
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                Spacer(minLength: SettingsDesign.Spacing.md)
+
+                trailing
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+
+            content
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .padding(SettingsDesign.Spacing.xl)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .sunpaperSettingsGlassCard()
+    }
+}
+
+private extension SettingsCard where Trailing == EmptyView {
+    init(
+        title: String,
+        subtitle: String? = nil,
+        systemImage: String,
+        tint: Color,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.init(
+            title: title,
+            subtitle: subtitle,
+            systemImage: systemImage,
+            tint: tint,
+            trailing: { EmptyView() },
+            content: content
+        )
     }
 }
 
@@ -607,22 +971,132 @@ private struct SettingsControlRow<Content: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 14) {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: 14) {
+                label
+                    .frame(width: 150, alignment: .leading)
+
+                content
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            VStack(alignment: .leading, spacing: SettingsDesign.Spacing.sm) {
+                label
+
+                content
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private var label: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+            if let help {
+                Text(help)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+private struct SettingsIconTile: View {
+    let systemImage: String
+    let tint: Color
+    var size: CGFloat = SettingsDesign.Sizing.iconTile
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+                .fill(tint.opacity(0.14))
+                .overlay {
+                    RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+                        .strokeBorder(tint.opacity(0.28), lineWidth: 1)
+                }
+
+            Image(systemName: systemImage)
+                .font(.system(size: size * 0.46, weight: .semibold))
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(tint, tint.opacity(0.55))
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct SettingsStatusChip: View {
+    let title: String
+    let systemImage: String
+    let tint: Color
+
+    var body: some View {
+        Label(title, systemImage: systemImage)
+            .font(.system(size: 12, weight: .semibold))
+            .labelStyle(.titleAndIcon)
+            .foregroundStyle(tint)
+            .padding(.horizontal, SettingsDesign.Spacing.sm)
+            .padding(.vertical, SettingsDesign.Spacing.xs)
+            .background(tint.opacity(0.12), in: Capsule(style: .continuous))
+            .overlay {
+                Capsule(style: .continuous)
+                    .strokeBorder(tint.opacity(0.24), lineWidth: 1)
+            }
+            .accessibilityElement(children: .combine)
+    }
+}
+
+private struct TodayScheduleRow: View {
+    let slot: TimeSlot
+    let timeText: String
+    let isCurrent: Bool
+
+    private var phase: SettingsPhase {
+        SettingsPhase.infer(slotName: slot.name, trigger: slot.trigger)
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: SettingsDesign.Spacing.md) {
+            SettingsIconTile(
+                systemImage: phase.symbolName,
+                tint: phase.colors.0,
+                size: SettingsDesign.Sizing.smallIconTile
+            )
+
             VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.body)
-                if let help {
-                    Text(help)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                Text(slot.name)
+                    .font(.system(size: 14, weight: .semibold))
+                    .lineLimit(1)
+
+                Label(slot.trigger.displayName, systemImage: slot.trigger.icon)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: SettingsDesign.Spacing.md)
+
+            VStack(alignment: .trailing, spacing: SettingsDesign.Spacing.xs) {
+                Text(timeText)
+                    .font(.system(size: 24, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+
+                if isCurrent {
+                    SettingsStatusChip(title: "Current", systemImage: "checkmark.circle.fill", tint: SettingsDesign.Color.success)
                 }
             }
-            .frame(width: 150, alignment: .leading)
-
-            content
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .padding(.horizontal, SettingsDesign.Spacing.md)
+        .padding(.vertical, SettingsDesign.Spacing.sm)
+        .frame(minHeight: SettingsDesign.Sizing.rowMinHeight)
+        .background(isCurrent ? SettingsDesign.Color.success.opacity(0.08) : Color(nsColor: .controlBackgroundColor).opacity(0.42), in: RoundedRectangle(cornerRadius: SettingsDesign.Radius.smallCard, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: SettingsDesign.Radius.smallCard, style: .continuous)
+                .strokeBorder(isCurrent ? SettingsDesign.Color.success.opacity(0.28) : Color(nsColor: .separatorColor).opacity(0.24), lineWidth: 1)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -645,15 +1119,11 @@ private struct EmptySettingsState<Actions: View>: View {
     }
 
     var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: systemImage)
-                .font(.title2)
-                .foregroundColor(.secondary)
-                .accessibilityHidden(true)
+        VStack(spacing: SettingsDesign.Spacing.sm) {
+            SettingsIconTile(systemImage: systemImage, tint: .secondary, size: 38)
 
             Text(title)
-                .font(.subheadline)
-                .fontWeight(.medium)
+                .font(.system(size: 14, weight: .semibold))
 
             Text(message)
                 .font(.caption)
@@ -665,9 +1135,13 @@ private struct EmptySettingsState<Actions: View>: View {
                 .padding(.top, 2)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 18)
-        .padding(.horizontal, 20)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+        .padding(.vertical, SettingsDesign.Spacing.xl)
+        .padding(.horizontal, SettingsDesign.Spacing.xl)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: SettingsDesign.Radius.card, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: SettingsDesign.Radius.card, style: .continuous)
+                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.22), lineWidth: 1)
+        }
         .accessibilityElement(children: .contain)
     }
 }
@@ -693,7 +1167,7 @@ private struct StatusMessage: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: SettingsDesign.Spacing.sm) {
             Image(systemName: systemImage)
                 .foregroundColor(tint)
                 .accessibilityHidden(true)
@@ -703,6 +1177,9 @@ private struct StatusMessage: View {
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .padding(SettingsDesign.Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: SettingsDesign.Radius.control, style: .continuous))
     }
 }
 
@@ -710,13 +1187,21 @@ private struct DisplaySummaryRow: View {
     let display: DisplayManager.Display
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: display.isPrimary ? "desktopcomputer" : "display")
-                .foregroundColor(display.isPrimary ? .blue : .secondary)
-                .accessibilityHidden(true)
+        HStack(spacing: SettingsDesign.Spacing.sm) {
+            SettingsIconTile(
+                systemImage: display.isPrimary ? "desktopcomputer" : "display",
+                tint: display.isPrimary ? SettingsDesign.Color.sky : .secondary,
+                size: 28
+            )
 
             Text(display.displayName)
+                .font(.caption)
                 .lineLimit(1)
+
+            if display.isPrimary {
+                SettingsStatusChip(title: "Primary", systemImage: "checkmark.circle.fill", tint: SettingsDesign.Color.sky)
+                    .scaleEffect(0.88)
+            }
 
             if !display.hasStableIdentity {
                 Image(systemName: "exclamationmark.triangle")
@@ -727,11 +1212,33 @@ private struct DisplaySummaryRow: View {
 
             Spacer()
         }
-        .font(.caption)
-        .padding(.vertical, 3)
+        .padding(.vertical, SettingsDesign.Spacing.xs)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(display.displayName)
         .accessibilityValue(display.isPrimary ? "Primary display" : "Connected display")
+    }
+}
+
+private struct SettingsGlassCardModifier: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        let borderOpacity = colorScheme == .dark ? 0.18 : 0.45
+        let shadowOpacity = colorScheme == .dark ? 0.28 : 0.08
+
+        content
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: SettingsDesign.Radius.largeCard, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: SettingsDesign.Radius.largeCard, style: .continuous)
+                    .strokeBorder(.white.opacity(borderOpacity), lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(shadowOpacity), radius: 18, x: 0, y: 8)
+    }
+}
+
+private extension View {
+    func sunpaperSettingsGlassCard() -> some View {
+        modifier(SettingsGlassCardModifier())
     }
 }
 
@@ -744,20 +1251,28 @@ struct TimeSlotRow: View {
     @State private var showingTriggerEditor = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 10) {
-                Image(systemName: slotIcon)
-                    .font(.title3)
-                    .symbolRenderingMode(.palette)
-                    .foregroundStyle(iconColors.0, iconColors.1)
-                    .frame(width: 24)
-                    .accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: SettingsDesign.Spacing.md) {
+            HStack(alignment: .center, spacing: SettingsDesign.Spacing.md) {
+                SettingsIconTile(
+                    systemImage: phase.symbolName,
+                    tint: phase.colors.0,
+                    size: SettingsDesign.Sizing.iconTile
+                )
 
-                TextField("Slot name", text: $slot.name)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("Slot name")
-                    .accessibilityValue(slot.name)
-                    .accessibilityIdentifier("timeSlotName.\(slot.id.uuidString)")
+                VStack(alignment: .leading, spacing: SettingsDesign.Spacing.xs) {
+                    TextField("Slot name", text: $slot.name)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 14, weight: .semibold))
+                        .accessibilityLabel("Slot name")
+                        .accessibilityValue(slot.name)
+                        .accessibilityIdentifier("timeSlotName.\(slot.id.uuidString)")
+
+                    Label(slot.isEnabled ? "Enabled" : "Disabled", systemImage: slot.isEnabled ? "checkmark.circle.fill" : "pause.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(slot.isEnabled ? SettingsDesign.Color.success : .secondary)
+                }
+
+                Spacer(minLength: SettingsDesign.Spacing.md)
 
                 Toggle("Enabled", isOn: $slot.isEnabled)
                     .toggleStyle(.checkbox)
@@ -781,98 +1296,80 @@ struct TimeSlotRow: View {
 
             Divider()
 
-            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
-                GridRow {
-                    Text("Trigger")
-                        .foregroundStyle(.secondary)
-                        .frame(width: 74, alignment: .leading)
-
-                    Button {
-                        showingTriggerEditor = true
-                    } label: {
-                        HStack(spacing: 6) {
-                            Label(slot.trigger.displayName, systemImage: slot.trigger.icon)
-                                .lineLimit(1)
-
-                            Spacer(minLength: 8)
-
-                            Image(systemName: "chevron.down")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                                .accessibilityHidden(true)
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .frame(maxWidth: 260, alignment: .leading)
-                    .accessibilityLabel("Trigger")
-                    .accessibilityValue(slot.trigger.displayName)
-                    .accessibilityHint("Opens trigger editing.")
-                    .accessibilityIdentifier("editTrigger.\(slot.id.uuidString)")
-                    .popover(isPresented: $showingTriggerEditor) {
-                        TriggerEditorPopover(trigger: $slot.trigger)
-                    }
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: SettingsDesign.Spacing.lg) {
+                    slotTriggerControl
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    slotWallpaperControl
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                GridRow {
-                    Text("Wallpaper")
-                        .foregroundStyle(.secondary)
-                        .frame(width: 74, alignment: .leading)
-
-                    WallpaperPicker(source: $slot.source, onPreview: onPreview)
-                        .frame(maxWidth: 300, alignment: .leading)
+                VStack(alignment: .leading, spacing: SettingsDesign.Spacing.md) {
+                    slotTriggerControl
+                    slotWallpaperControl
                 }
             }
+            .opacity(slot.isEnabled ? 1 : 0.62)
         }
-        .padding(12)
-        .background(.background, in: RoundedRectangle(cornerRadius: 8))
+        .padding(SettingsDesign.Spacing.lg)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: SettingsDesign.Radius.card, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.quaternary, lineWidth: 1)
+            RoundedRectangle(cornerRadius: SettingsDesign.Radius.card, style: .continuous)
+                .strokeBorder(slot.isEnabled ? phase.colors.0.opacity(0.26) : Color(nsColor: .separatorColor).opacity(0.24), lineWidth: 1)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("timeSlotRow.\(slot.id.uuidString)")
     }
 
-    // Icon based on slot name keywords
-    private var slotIcon: String {
-        let name = slot.name.lowercased()
-        if name.contains("morning") || name.contains("dawn") || name.contains("sunrise") {
-            return "sunrise.fill"
-        } else if name.contains("day") || name.contains("noon") || name.contains("afternoon") {
-            return "sun.max.fill"
-        } else if name.contains("evening") || name.contains("dusk") || name.contains("sunset") {
-            return "sunset.fill"
-        } else if name.contains("night") || name.contains("dark") {
-            return "moon.stars.fill"
+    private var slotTriggerControl: some View {
+        VStack(alignment: .leading, spacing: SettingsDesign.Spacing.xs) {
+            Text("Trigger")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Button {
+                showingTriggerEditor = true
+            } label: {
+                HStack(spacing: SettingsDesign.Spacing.sm) {
+                    Label(slot.trigger.displayName, systemImage: slot.trigger.icon)
+                        .lineLimit(1)
+
+                    Spacer(minLength: SettingsDesign.Spacing.sm)
+
+                    Image(systemName: "chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .frame(maxWidth: 280, alignment: .leading)
+            .accessibilityLabel("Trigger")
+            .accessibilityValue(slot.trigger.displayName)
+            .accessibilityHint("Opens trigger editing.")
+            .accessibilityIdentifier("editTrigger.\(slot.id.uuidString)")
+            .popover(isPresented: $showingTriggerEditor) {
+                TriggerEditorPopover(trigger: $slot.trigger)
+            }
         }
-        // Fallback to trigger-based icon
-        return slot.trigger.icon
     }
 
-    private var iconColors: (Color, Color) {
-        let name = slot.name.lowercased()
-        if name.contains("morning") || name.contains("dawn") || name.contains("sunrise") {
-            return (.pink, .orange)
-        } else if name.contains("day") || name.contains("noon") || name.contains("afternoon") {
-            return (.yellow, .orange)
-        } else if name.contains("evening") || name.contains("dusk") || name.contains("sunset") {
-            return (.orange, .red)
-        } else if name.contains("night") || name.contains("dark") {
-            return (.indigo, .purple)
-        }
-        // Fallback to trigger-based colors
-        switch slot.trigger {
-        case .solar(let event, _):
-            switch event {
-            case .sunrise, .civilDawn: return (.pink, .orange)
-            case .sunset, .civilDusk: return (.orange, .red)
-            case .solarNoon: return (.yellow, .orange)
-            }
-        case .fixed:
-            return (.blue, .cyan)
+    private var slotWallpaperControl: some View {
+        VStack(alignment: .leading, spacing: SettingsDesign.Spacing.xs) {
+            Text("Wallpaper")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            WallpaperPicker(source: $slot.source, onPreview: onPreview)
+                .frame(maxWidth: 320, alignment: .leading)
         }
     }
+
+    private var phase: SettingsPhase {
+        SettingsPhase.infer(slotName: slot.name, trigger: slot.trigger)
+    }
+
 }
 
 // MARK: - Trigger Editor Popover
@@ -887,9 +1384,19 @@ struct TriggerEditorPopover: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Edit Trigger")
-                .font(.headline)
+        VStack(alignment: .leading, spacing: SettingsDesign.Spacing.lg) {
+            HStack(spacing: SettingsDesign.Spacing.md) {
+                SettingsIconTile(systemImage: trigger.icon, tint: triggerTint, size: SettingsDesign.Sizing.smallIconTile)
+
+                VStack(alignment: .leading, spacing: SettingsDesign.Spacing.xxs) {
+                    Text("Edit Trigger")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text(trigger.displayName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
 
             Picker("Trigger type", selection: modeBinding) {
                 Text("Solar").tag(TriggerMode.solar)
@@ -898,7 +1405,7 @@ struct TriggerEditorPopover: View {
             .pickerStyle(.segmented)
             .accessibilityIdentifier("triggerTypePicker")
 
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: SettingsDesign.Spacing.md) {
                 if case .solar = trigger {
                     labeledRow("Event") {
                         Picker("Event", selection: solarEventBinding) {
@@ -946,8 +1453,9 @@ struct TriggerEditorPopover: View {
                 .accessibilityIdentifier("doneEditingTriggerButton")
             }
         }
-        .padding()
-        .frame(width: 310)
+        .padding(SettingsDesign.Spacing.lg)
+        .frame(width: 340)
+        .background(.regularMaterial)
         .accessibilityIdentifier("triggerEditorPopover")
     }
 
@@ -958,10 +1466,24 @@ struct TriggerEditorPopover: View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(title)
                 .foregroundStyle(.secondary)
+                .font(.caption)
                 .frame(width: 58, alignment: .leading)
 
             content()
                 .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var triggerTint: Color {
+        switch trigger {
+        case .solar(let event, _):
+            switch event {
+            case .sunrise, .civilDawn: return SettingsDesign.Color.sunrise
+            case .solarNoon: return SettingsDesign.Color.day
+            case .sunset, .civilDusk: return SettingsDesign.Color.sunset
+            }
+        case .fixed:
+            return SettingsDesign.Color.sky
         }
     }
 
@@ -1210,33 +1732,41 @@ struct WallpaperPicker: View {
         Button {
             showingGridPicker = true
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: SettingsDesign.Spacing.sm) {
                 if case .builtIn(let assetID) = source,
                    let asset = catalog.asset(for: assetID) {
-                    AsyncThumbnail(url: asset.thumbnailURL, size: CGSize(width: 38, height: 24))
+                    AsyncThumbnail(url: asset.thumbnailURL, size: CGSize(width: 44, height: 28))
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                         .accessibilityHidden(true)
                 } else {
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(.quaternary)
-                        .frame(width: 38, height: 24)
+                        .fill(sourcePlaceholderTint.opacity(0.14))
+                        .frame(width: 44, height: 28)
                         .overlay {
-                            Image(systemName: "photo")
+                            Image(systemName: sourcePlaceholderIcon)
                                 .font(.caption2)
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(sourcePlaceholderTint)
                         }
                         .accessibilityHidden(true)
                 }
 
-                Text(displayName)
-                    .font(.subheadline)
-                    .lineLimit(1)
-                    .frame(maxWidth: 190, alignment: .leading)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(displayName)
+                        .font(.system(size: 13, weight: .medium))
+                        .lineLimit(1)
+
+                    Text(sourceKind)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: 210, alignment: .leading)
 
                 Image(systemName: "chevron.down")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .accessibilityHidden(true)
             }
+            .padding(.vertical, 1)
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
@@ -1262,6 +1792,39 @@ struct WallpaperPicker: View {
                 ?? "Unknown Aerial"
         case .custom(let path):
             return URL(fileURLWithPath: path).lastPathComponent
+        }
+    }
+
+    private var sourceKind: String {
+        switch source {
+        case .none:
+            return "No wallpaper selected"
+        case .builtIn:
+            return "Apple aerial"
+        case .custom:
+            return "Custom image"
+        }
+    }
+
+    private var sourcePlaceholderIcon: String {
+        switch source {
+        case .none:
+            return "photo"
+        case .builtIn:
+            return "sparkles.rectangle.stack"
+        case .custom:
+            return "photo.fill"
+        }
+    }
+
+    private var sourcePlaceholderTint: Color {
+        switch source {
+        case .none:
+            return .secondary
+        case .builtIn:
+            return SettingsDesign.Color.twilight
+        case .custom:
+            return SettingsDesign.Color.sky
         }
     }
 }
@@ -1497,23 +2060,33 @@ struct LocationPickerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Set Location")
-                    .font(.headline)
+            HStack(spacing: SettingsDesign.Spacing.md) {
+                SettingsIconTile(systemImage: "location.fill", tint: SettingsDesign.Color.sky)
 
-                Text("Current: \(currentLocation ?? "Not set")")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-                    .accessibilityIdentifier("currentLocationSummary")
+                VStack(alignment: .leading, spacing: SettingsDesign.Spacing.xxs) {
+                    Text("Set Location")
+                        .font(.system(size: 17, weight: .semibold))
+
+                    Text("Current: \(currentLocation ?? "Not set")")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .accessibilityIdentifier("currentLocationSummary")
+                }
+
+                Spacer()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding()
+            .padding(SettingsDesign.Spacing.xl)
 
             Divider()
 
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: SettingsDesign.Spacing.md) {
+                HStack(spacing: SettingsDesign.Spacing.sm) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+
                     TextField("Search city or address", text: $searchViewModel.searchText)
                         .textFieldStyle(.roundedBorder)
                         .focused($searchFieldFocused)
@@ -1532,7 +2105,7 @@ struct LocationPickerView: View {
 
                 locationResults
             }
-            .padding()
+            .padding(SettingsDesign.Spacing.xl)
 
             Divider()
 
@@ -1546,9 +2119,10 @@ struct LocationPickerView: View {
                 .keyboardShortcut(.cancelAction)
                 .accessibilityIdentifier("cancelLocationPickerButton")
             }
-            .padding()
+            .padding(SettingsDesign.Spacing.lg)
         }
-        .frame(width: 380, height: 440)
+        .frame(width: 460, height: 520)
+        .background(SettingsWindowBackground())
         .onAppear {
             searchFieldFocused = true
         }
@@ -1557,7 +2131,7 @@ struct LocationPickerView: View {
 
     private var locationResults: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 4) {
+            LazyVStack(alignment: .leading, spacing: SettingsDesign.Spacing.xs) {
                 if !searchViewModel.searchResults.isEmpty {
                     resultHeader("Search Results")
 
@@ -1604,7 +2178,7 @@ struct LocationPickerView: View {
         Text(title)
             .font(.caption)
             .foregroundColor(.secondary)
-            .padding(.top, 2)
+            .padding(.top, SettingsDesign.Spacing.xs)
             .accessibilityAddTraits(.isHeader)
     }
 
@@ -1625,20 +2199,29 @@ struct LocationButton: View {
         Button {
             onSelect(name, lat, lon)
         } label: {
-            HStack {
+            HStack(spacing: SettingsDesign.Spacing.sm) {
                 Image(systemName: "mappin.circle.fill")
-                    .foregroundColor(.red)
+                    .foregroundColor(SettingsDesign.Color.sunset)
                     .accessibilityHidden(true)
-                Text(name)
-                    .lineLimit(1)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(name)
+                        .font(.system(size: 13, weight: .medium))
+                        .lineLimit(1)
+                    Text("\(lat.formatted(.number.precision(.fractionLength(3)))), \(lon.formatted(.number.precision(.fractionLength(3))))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+
                 Spacer()
             }
         }
         .buttonStyle(.plain)
-        .padding(8)
+        .padding(SettingsDesign.Spacing.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-        .background(isHovered ? Color.accentColor.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+        .contentShape(RoundedRectangle(cornerRadius: SettingsDesign.Radius.control, style: .continuous))
+        .background(isHovered ? Color.accentColor.opacity(0.12) : Color(nsColor: .controlBackgroundColor).opacity(0.28), in: RoundedRectangle(cornerRadius: SettingsDesign.Radius.control, style: .continuous))
         .onHover { hovering in
             isHovered = hovering
         }
