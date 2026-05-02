@@ -327,12 +327,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func updateConfig(_ newConfig: WallpaperConfig) {
         config = newConfig
-        scheduler?.updateConfig(newConfig)
 
         // Update location if changed
         if let lat = newConfig.latitude, let lon = newConfig.longitude {
             currentLocation = CLLocationCoordinate2D(latitude: lat, longitude: lon)
         }
+
+        scheduler?.updateConfig(newConfig)
     }
 
     // MARK: - Location Updates

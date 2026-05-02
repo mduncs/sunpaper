@@ -241,8 +241,15 @@ class SlotScheduler: ObservableObject {
     // MARK: - Private
 
     private func updateNow() {
-        guard config.enableSolarTracking else { return }
-        guard let location = locationProvider() else { return }
+        guard config.enableSolarTracking else {
+            clearScheduleState()
+            return
+        }
+
+        guard let location = locationProvider() else {
+            clearScheduleState()
+            return
+        }
 
         let currentDate = dependencies.now()
         let sunTimes = dependencies.calculateSunTimes(location, currentDate)
@@ -327,6 +334,12 @@ class SlotScheduler: ObservableObject {
         todaySchedule = sorted.map { slot in
             (slot: slot, time: slot.resolvedTime(sunTimes: sunTimes, on: date))
         }
+    }
+
+    private func clearScheduleState() {
+        currentSlot = nil
+        nextTransition = nil
+        todaySchedule = []
     }
 
     private func scheduleNextUpdate() {

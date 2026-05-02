@@ -2000,6 +2000,8 @@ class SettingsViewModel: ObservableObject {
 
     private func updateSchedule() {
         guard let lat = config.latitude, let lon = config.longitude else {
+            todaySchedule = []
+            currentSlot = nil
             polarWarning = nil
             return
         }
