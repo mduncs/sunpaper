@@ -587,19 +587,18 @@ struct SettingsView: View {
     }
 
     private var launchAtLoginSection: some View {
-        VStack(alignment: .leading, spacing: SettingsDesign.Spacing.sm) {
+        SettingsControlRow(
+            title: "Open at Login",
+            help: "Uses the macOS login item service for this app."
+        ) {
             Toggle("Open at Login", isOn: $viewModel.launchAtLogin)
-                .font(.system(size: 13, weight: .semibold))
+                .labelsHidden()
                 .accessibilityLabel("Launch at login")
                 .accessibilityValue(viewModel.launchAtLogin ? "Enabled" : "Disabled")
                 .accessibilityHint("Opens Sunpaper automatically when you sign in.")
                 .accessibilityIdentifier("launchAtLoginToggle")
-
-            Text("Uses the macOS login item service for this app.")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
+        .padding(.leading, generalBodyIndent)
     }
 
     private var aboutSection: some View {
@@ -612,15 +611,14 @@ struct SettingsView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("versionRow")
+        .padding(.leading, generalBodyIndent)
     }
 
     private var resetSection: some View {
-        VStack(alignment: .leading, spacing: SettingsDesign.Spacing.md) {
-            Text("Restore the default slots and clear custom schedule settings. Your selected location is reset as part of the default configuration.")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
+        SettingsControlRow(
+            title: "Defaults",
+            help: "Restore the default slots and clear custom schedule settings. Your selected location is reset as part of the default configuration."
+        ) {
             HStack {
                 Button(role: .destructive) {
                     showingResetConfirmation = true
@@ -635,14 +633,15 @@ struct SettingsView: View {
 
                 Spacer()
             }
-            .alert("Reset Settings?", isPresented: $showingResetConfirmation) {
-                Button("Cancel", role: .cancel) { }
-                Button("Reset", role: .destructive) {
-                    viewModel.resetToDefaults()
-                }
-            } message: {
-                Text("This removes your custom time slots and restores the default configuration.")
+        }
+        .padding(.leading, generalBodyIndent)
+        .alert("Reset Settings?", isPresented: $showingResetConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Reset", role: .destructive) {
+                viewModel.resetToDefaults()
             }
+        } message: {
+            Text("This removes your custom time slots and restores the default configuration.")
         }
     }
 
@@ -747,6 +746,10 @@ struct SettingsView: View {
         case .perDisplay:
             return "Edit the schedule for one display at a time."
         }
+    }
+
+    private var generalBodyIndent: CGFloat {
+        SettingsDesign.Sizing.iconTile + SettingsDesign.Spacing.md
     }
 
     private var hasLocation: Bool {
