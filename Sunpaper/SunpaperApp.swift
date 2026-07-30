@@ -137,10 +137,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         )
-        popover.contentViewController = NSHostingController(
+        let hostingController = NSHostingController(
             rootView: view
                 .frame(width: SunpaperSize.popoverWidth)
         )
+        let fittedSize = hostingController.sizeThatFits(
+            in: NSSize(
+                width: SunpaperSize.popoverWidth,
+                height: .greatestFiniteMagnitude
+            )
+        )
+        hostingController.preferredContentSize = NSSize(
+            width: SunpaperSize.popoverWidth,
+            height: ceil(fittedSize.height)
+        )
+        popover.contentViewController = hostingController
+        popover.contentSize = hostingController.preferredContentSize
     }
 
     private func applySlot(_ slot: TimeSlot) {

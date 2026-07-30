@@ -123,17 +123,8 @@ struct MenuBarView: View {
         }
     }
 
-    @ViewBuilder
     private var scheduleList: some View {
-        if todaySchedule.count > maxVisibleScheduleRows {
-            ScrollView {
-                scheduleRows
-            }
-            .scrollIndicators(.hidden)
-            .frame(maxHeight: scheduleListMaxHeight)
-        } else {
-            scheduleRows
-        }
+        scheduleRows
     }
 
     private var scheduleRows: some View {
@@ -163,14 +154,6 @@ struct MenuBarView: View {
         }
 
         return .ready
-    }
-
-    private var maxVisibleScheduleRows: Int {
-        lastError == nil ? 5 : 3
-    }
-
-    private var scheduleListMaxHeight: CGFloat {
-        CGFloat(maxVisibleScheduleRows * 32)
     }
 
     private var statusAccessibilityValue: String {
