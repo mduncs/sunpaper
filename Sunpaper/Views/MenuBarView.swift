@@ -129,6 +129,7 @@ struct MenuBarView: View {
             ScrollView {
                 scheduleRows
             }
+            .scrollIndicators(.hidden)
             .frame(maxHeight: scheduleListMaxHeight)
         } else {
             scheduleRows
