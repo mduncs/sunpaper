@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="Sunpaper/Assets.xcassets/AppIcon.appiconset/icon_256x256.png" width="128" alt="Sunpaper icon">
+  <img src="screenshots/sunpaper-lockup.png" width="420" alt="Sunpaper">
 </p>
 
 # Sunpaper
