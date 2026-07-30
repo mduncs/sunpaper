@@ -36,8 +36,18 @@ Package.resolved
 # Distribution
 dist/
 
-# Scripts (icon generators, etc)
-scripts/
+# Local design generators; the release script is public.
+/scripts/*
+!/scripts/release.sh
+/design/
+
+# Local reverse-engineering and diagnostic work
+/diagnostics/
+/docs/
+/tools/
+
+# The landing site is versioned and deployed from its own Sites repository.
+/site/
 
 # Profiling
 *.profraw
