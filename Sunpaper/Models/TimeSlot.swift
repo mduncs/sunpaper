@@ -409,28 +409,7 @@ struct WallpaperConfig: Codable, Equatable {
     // MARK: - Default Configuration
 
     static let `default` = WallpaperConfig(
-        slots: [
-            TimeSlot(
-                name: "Morning",
-                trigger: .hoursBeforeSunrise(1),
-                source: .builtIn(assetID: BuiltInWallpapers.tahoe.morning)
-            ),
-            TimeSlot(
-                name: "Day",
-                trigger: .hoursAfterSunrise(1),
-                source: .builtIn(assetID: BuiltInWallpapers.tahoe.day)
-            ),
-            TimeSlot(
-                name: "Evening",
-                trigger: .hoursBeforeSunset(1),
-                source: .builtIn(assetID: BuiltInWallpapers.tahoe.evening)
-            ),
-            TimeSlot(
-                name: "Night",
-                trigger: .hoursAfterSunset(1),
-                source: .builtIn(assetID: BuiltInWallpapers.tahoe.night)
-            )
-        ],
+        slots: BuiltInWallpapers.tahoe.defaultSlots,
         enableSolarTracking: true
     )
 }
@@ -459,6 +438,37 @@ struct AppPreferencesEnvelope: Codable, Equatable {
 /// Registry of known Apple aerial wallpapers
 struct BuiltInWallpapers {
 
+    enum Phase: String, CaseIterable, Identifiable {
+        case morning = "Morning"
+        case day = "Day"
+        case evening = "Evening"
+        case night = "Night"
+
+        var id: String { rawValue }
+
+        var trigger: Trigger {
+            switch self {
+            case .morning:
+                return .hoursBeforeSunrise(1)
+            case .day:
+                return .hoursAfterSunrise(1)
+            case .evening:
+                return .hoursBeforeSunset(1)
+            case .night:
+                return .hoursAfterSunset(1)
+            }
+        }
+
+        var systemImage: String {
+            switch self {
+            case .morning: return "sunrise.fill"
+            case .day: return "sun.max.fill"
+            case .evening: return "sunset.fill"
+            case .night: return "moon.stars.fill"
+            }
+        }
+    }
+
     struct WallpaperSet {
         let name: String
         let morning: String
@@ -473,6 +483,27 @@ struct BuiltInWallpapers {
                 ("Evening", evening),
                 ("Night", night)
             ]
+        }
+
+        func assetID(for phase: Phase) -> String {
+            switch phase {
+            case .morning: return morning
+            case .day: return day
+            case .evening: return evening
+            case .night: return night
+            }
+        }
+
+        func slot(for phase: Phase) -> TimeSlot {
+            TimeSlot(
+                name: phase.rawValue,
+                trigger: phase.trigger,
+                source: .builtIn(assetID: assetID(for: phase))
+            )
+        }
+
+        var defaultSlots: [TimeSlot] {
+            Phase.allCases.map(slot(for:))
         }
     }
 

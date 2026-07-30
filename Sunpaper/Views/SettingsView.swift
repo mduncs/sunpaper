@@ -100,6 +100,13 @@ private enum SettingsPhase {
     }
 }
 
+private enum ForcedDownloadStatus: Equatable {
+    case idle
+    case downloading(completed: Int, total: Int)
+    case succeeded(count: Int)
+    case failed(String)
+}
+
 struct SettingsView: View {
     fileprivate enum SettingsPane: Hashable {
         case schedule
@@ -247,6 +254,15 @@ struct SettingsView: View {
             }
 
             SettingsCard(
+                title: "Wallpaper Downloads",
+                subtitle: "Fetch fresh copies of every Apple aerial used by the active schedule.",
+                systemImage: "icloud.and.arrow.down.fill",
+                tint: SettingsDesign.Color.sky
+            ) {
+                wallpaperDownloadSection
+            }
+
+            SettingsCard(
                 title: "Display Assignment",
                 subtitle: displayModeDescription,
                 systemImage: "display.2",
@@ -302,6 +318,71 @@ struct SettingsView: View {
     }
 
     // MARK: - Sections
+
+    private var wallpaperDownloadSection: some View {
+        VStack(alignment: .leading, spacing: SettingsDesign.Spacing.md) {
+            HStack(alignment: .center, spacing: SettingsDesign.Spacing.md) {
+                VStack(alignment: .leading, spacing: SettingsDesign.Spacing.xs) {
+                    Text("Force Wallpaper Download")
+                        .font(.system(size: 13, weight: .semibold))
+
+                    Text("Re-downloads scheduled aerials even when macOS already has a local copy.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: SettingsDesign.Spacing.md)
+
+                Button {
+                    viewModel.forceDownloadScheduledAerials()
+                } label: {
+                    if viewModel.isForceDownloading {
+                        Label("Downloading…", systemImage: "arrow.down.circle")
+                    } else {
+                        Label("Force Download", systemImage: "icloud.and.arrow.down")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(viewModel.isForceDownloading || viewModel.scheduledAerialCount == 0)
+                .accessibilityHint("Downloads fresh copies of all Apple aerials in the active schedule.")
+                .accessibilityIdentifier("forceWallpaperDownloadButton")
+            }
+
+            switch viewModel.forcedDownloadStatus {
+            case .idle:
+                if viewModel.scheduledAerialCount == 0 {
+                    StatusMessage(
+                        "Add an Apple aerial to the active schedule before downloading.",
+                        systemImage: "exclamationmark.triangle",
+                        tint: .secondary
+                    )
+                }
+            case .downloading(let completed, let total):
+                VStack(alignment: .leading, spacing: SettingsDesign.Spacing.xs) {
+                    ProgressView(value: Double(completed), total: Double(total))
+                        .accessibilityLabel("Wallpaper download progress")
+                        .accessibilityValue("\(completed) of \(total)")
+                    Text("Downloaded \(completed) of \(total) scheduled aerials. Keep Sunpaper open.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            case .succeeded(let count):
+                StatusMessage(
+                    "Downloaded fresh \(count == 1 ? "copy" : "copies") of \(count) scheduled \(count == 1 ? "aerial" : "aerials").",
+                    systemImage: "checkmark.circle.fill",
+                    tint: SettingsDesign.Color.success
+                )
+            case .failed(let message):
+                StatusMessage(
+                    message,
+                    systemImage: "exclamationmark.triangle.fill",
+                    tint: SettingsDesign.Color.danger
+                )
+            }
+        }
+        .accessibilityIdentifier("wallpaperDownloadSection")
+    }
 
     private var locationSection: some View {
         VStack(alignment: .leading, spacing: SettingsDesign.Spacing.md) {
@@ -431,22 +512,19 @@ struct SettingsView: View {
 
                 Spacer(minLength: 12)
 
-                Button {
-                    viewModel.addSlot()
-                } label: {
-                    Label("Add Slot", systemImage: "plus")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .accessibilityLabel("Add time slot")
-                .accessibilityHint("Adds a wallpaper time slot for all displays.")
-                .accessibilityIdentifier("addAllDisplaysSlotButton")
+                addSlotMenu(
+                    identifier: "addAllDisplaysSlotButton",
+                    addCustom: { viewModel.addSlot() },
+                    addTahoePreset: { viewModel.addTahoeSlot(phase: $0) }
+                )
             }
 
             if viewModel.config.slots.isEmpty {
-                emptySlotState(message: "Add a slot to create the schedule used on every display.") {
-                    viewModel.addSlot()
-                }
+                emptySlotState(
+                    message: "Add a slot to create the schedule used on every display.",
+                    addCustom: { viewModel.addSlot() },
+                    addTahoePreset: { viewModel.addTahoeSlot(phase: $0) }
+                )
             } else {
                 ForEach($viewModel.config.slots) { $slot in
                     TimeSlotRow(
@@ -502,22 +580,19 @@ struct SettingsView: View {
 
                 Spacer(minLength: 12)
 
-                Button {
-                    viewModel.addSlot(for: display.uuid)
-                } label: {
-                    Label("Add Slot", systemImage: "plus")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .accessibilityLabel("Add time slot for \(display.displayName)")
-                .accessibilityHint("Adds a wallpaper time slot for this display.")
-                .accessibilityIdentifier("addDisplaySlotButton.\(display.uuid)")
+                addSlotMenu(
+                    identifier: "addDisplaySlotButton.\(display.uuid)",
+                    addCustom: { viewModel.addSlot(for: display.uuid) },
+                    addTahoePreset: { viewModel.addTahoeSlot(phase: $0, for: display.uuid) }
+                )
             }
 
             if displaySlots.isEmpty {
-                emptySlotState(message: "Add a slot to create the schedule for \(display.displayName).") {
-                    viewModel.addSlot(for: display.uuid)
-                }
+                emptySlotState(
+                    message: "Add a slot to create the schedule for \(display.displayName).",
+                    addCustom: { viewModel.addSlot(for: display.uuid) },
+                    addTahoePreset: { viewModel.addTahoeSlot(phase: $0, for: display.uuid) }
+                )
             } else {
                 ForEach(displaySlots.indices, id: \.self) { index in
                     TimeSlotRow(
@@ -662,22 +737,54 @@ struct SettingsView: View {
         .accessibilityIdentifier("connectedDisplaysList")
     }
 
-    private func emptySlotState(message: String, addAction: @escaping () -> Void) -> some View {
+    private func addSlotMenu(
+        identifier: String,
+        addCustom: @escaping () -> Void,
+        addTahoePreset: @escaping (BuiltInWallpapers.Phase) -> Void
+    ) -> some View {
+        Menu {
+            Section("Tahoe Defaults") {
+                ForEach(BuiltInWallpapers.Phase.allCases) { phase in
+                    Button {
+                        addTahoePreset(phase)
+                    } label: {
+                        Label("Tahoe \(phase.rawValue)", systemImage: phase.systemImage)
+                    }
+                }
+            }
+
+            Divider()
+
+            Button {
+                addCustom()
+            } label: {
+                Label("Custom Slot", systemImage: "slider.horizontal.3")
+            }
+        } label: {
+            Label("Add Slot", systemImage: "plus")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .accessibilityLabel("Add time slot")
+        .accessibilityHint("Adds a Tahoe default or a custom wallpaper time slot.")
+        .accessibilityIdentifier(identifier)
+    }
+
+    private func emptySlotState(
+        message: String,
+        addCustom: @escaping () -> Void,
+        addTahoePreset: @escaping (BuiltInWallpapers.Phase) -> Void
+    ) -> some View {
         EmptySettingsState(
             title: "No Time Slots",
             systemImage: "clock",
             message: message
         ) {
-            Button {
-                addAction()
-            } label: {
-                Label("Add Slot", systemImage: "plus")
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .accessibilityLabel("Add time slot")
-            .accessibilityHint("Adds a wallpaper time slot.")
-            .accessibilityIdentifier("emptyStateAddSlotButton")
+            addSlotMenu(
+                identifier: "emptyStateAddSlotButton",
+                addCustom: addCustom,
+                addTahoePreset: addTahoePreset
+            )
         }
         .accessibilityIdentifier("emptyTimeSlotsState")
     }
@@ -1850,6 +1957,16 @@ class SettingsViewModel: ObservableObject {
     @Published var polarWarning: String?
     @Published var displays: [DisplayManager.Display] = []
     @Published var selectedDisplayUUID: String = ""
+    @Published fileprivate var forcedDownloadStatus: ForcedDownloadStatus = .idle
+
+    var isForceDownloading: Bool {
+        if case .downloading = forcedDownloadStatus { return true }
+        return false
+    }
+
+    var scheduledAerialCount: Int {
+        scheduledAerialAssetIDs.count
+    }
 
     var selectedDisplay: DisplayManager.Display? {
         displays.first(where: { $0.uuid == selectedDisplayUUID }) ?? displays.first
@@ -1917,6 +2034,10 @@ class SettingsViewModel: ObservableObject {
         config.slots.append(newSlot)
     }
 
+    func addTahoeSlot(phase: BuiltInWallpapers.Phase) {
+        config.slots.append(BuiltInWallpapers.tahoe.slot(for: phase))
+    }
+
     func removeSlot(id: UUID) {
         config.slots.removeAll { $0.id == id }
     }
@@ -1929,6 +2050,52 @@ class SettingsViewModel: ObservableObject {
             try? WallpaperService.shared.setCustomWallpaper(path: path)
         case .none:
             break
+        }
+    }
+
+    func forceDownloadScheduledAerials() {
+        guard !isForceDownloading else { return }
+
+        let assetIDs = scheduledAerialAssetIDs
+        guard !assetIDs.isEmpty else {
+            forcedDownloadStatus = .failed("No Apple aerials are used by the active schedule.")
+            return
+        }
+
+        forcedDownloadStatus = .downloading(completed: 0, total: assetIDs.count)
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            for (index, assetID) in assetIDs.enumerated() {
+                guard let asset = AerialCatalog.shared.asset(for: assetID),
+                      let downloadURL = asset.downloadURL else {
+                    let name = BuiltInWallpapers.name(for: assetID) ?? assetID
+                    self.forcedDownloadStatus = .failed(
+                        "Could not download \(name) because macOS did not provide its download URL. Open System Settings → Wallpaper once, then retry."
+                    )
+                    return
+                }
+
+                do {
+                    try await WallpaperService.shared.redownloadAerial(assetID: assetID, from: downloadURL)
+                    self.forcedDownloadStatus = .downloading(
+                        completed: index + 1,
+                        total: assetIDs.count
+                    )
+                } catch {
+                    let name = BuiltInWallpapers.name(for: assetID) ?? asset.displayName
+                    self.forcedDownloadStatus = .failed(
+                        "Could not download \(name): \(error.localizedDescription) Check your connection and retry."
+                    )
+                    return
+                }
+            }
+
+            self.forcedDownloadStatus = .succeeded(count: assetIDs.count)
+            if let appDelegate = NSApp.delegate as? AppDelegate {
+                appDelegate.forceUpdate()
+            }
         }
     }
 
@@ -1946,6 +2113,12 @@ class SettingsViewModel: ObservableObject {
         )
         var displaySlots = config.slots(for: displayUUID)
         displaySlots.append(newSlot)
+        config.setSlots(displaySlots, for: displayUUID)
+    }
+
+    func addTahoeSlot(phase: BuiltInWallpapers.Phase, for displayUUID: String) {
+        var displaySlots = config.slots(for: displayUUID)
+        displaySlots.append(BuiltInWallpapers.tahoe.slot(for: phase))
         config.setSlots(displaySlots, for: displayUUID)
     }
 
@@ -1984,6 +2157,20 @@ class SettingsViewModel: ObservableObject {
         }
 
         return config.slots
+    }
+
+    private var scheduledAerialAssetIDs: [String] {
+        let slots: [TimeSlot]
+        switch config.displayMode {
+        case .allDisplays:
+            slots = config.slots
+        case .perDisplay:
+            slots = config.perDisplayConfigs.flatMap(\.slots)
+        }
+
+        return Array(
+            Set(slots.compactMap(\.source.assetID))
+        ).sorted()
     }
 
     private var currentSunTimes: SunCalculator.SunTimes? {

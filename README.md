@@ -34,9 +34,11 @@ files already provided by macOS.
 - Schedules wallpaper changes around local sunrise and sunset
 - Supports custom times and any number of time slots
 - Includes matching Tahoe and Sequoia aerial sets
+- Restores deleted Tahoe defaults from Add Slot, including Tahoe Night
 - Works across multiple displays
 - Can launch automatically when you sign in
-- Checks for missing aerial downloads and repairs an out-of-sync wallpaper
+- Can force fresh downloads of every aerial used by the active schedule
+- Checks for missing aerials and repairs an out-of-sync wallpaper
 
 ## Requirements
 

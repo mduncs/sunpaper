@@ -175,10 +175,24 @@ final class WallpaperService: @unchecked Sendable {
 
     /// Download an aerial video to the local videos directory.
     func downloadAerial(assetID: String, from url: URL) async throws {
+        try await downloadAerial(assetID: assetID, from: url, replacingExisting: false)
+    }
+
+    /// Download a fresh copy of an aerial, replacing an existing local video
+    /// only after the new download succeeds.
+    func redownloadAerial(assetID: String, from url: URL) async throws {
+        try await downloadAerial(assetID: assetID, from: url, replacingExisting: true)
+    }
+
+    private func downloadAerial(
+        assetID: String,
+        from url: URL,
+        replacingExisting: Bool
+    ) async throws {
         let destination = videoURL(assetID: assetID)
 
         // Already downloaded
-        guard !FileManager.default.fileExists(atPath: destination.path) else { return }
+        guard replacingExisting || !FileManager.default.fileExists(atPath: destination.path) else { return }
 
         // Ensure videos directory exists
         try FileManager.default.createDirectory(at: videosDirectoryURL, withIntermediateDirectories: true)
@@ -195,16 +209,21 @@ final class WallpaperService: @unchecked Sendable {
             throw WallpaperError.downloadFailed(assetID: assetID)
         }
 
-        // Atomic move to destination. If another download finished first, that's fine.
+        // Preserve the working copy until the fresh download has completed.
         do {
-            try FileManager.default.moveItem(at: tempURL, to: destination)
+            if replacingExisting, FileManager.default.fileExists(atPath: destination.path) {
+                _ = try FileManager.default.replaceItemAt(destination, withItemAt: tempURL)
+            } else {
+                try FileManager.default.moveItem(at: tempURL, to: destination)
+            }
             #if DEBUG
-            print("[WallpaperService] Downloaded aerial \(assetID)")
+            print("[WallpaperService] \(replacingExisting ? "Redownloaded" : "Downloaded") aerial \(assetID)")
             #endif
         } catch {
-            // File already exists (race condition) - clean up temp
+            // A concurrent normal download may have completed first.
             try? FileManager.default.removeItem(at: tempURL)
-            guard FileManager.default.fileExists(atPath: destination.path) else {
+            guard !replacingExisting,
+                  FileManager.default.fileExists(atPath: destination.path) else {
                 throw error
             }
         }

@@ -125,6 +125,21 @@ final class AerialCatalogTests: XCTestCase {
         XCTAssertEqual(decoded.videoURL, asset.videoURL)
     }
 
+    @MainActor
+    func testAssetIndexRetainsHiddenTimeOfDayVariants() {
+        let hiddenNight = makeAsset(
+            id: BuiltInWallpapers.tahoe.night,
+            accessibilityLabel: "Tahoe Night",
+            showInTopLevel: false,
+            videoURL: "https://example.com/tahoe-night.mov"
+        )
+
+        let index = AerialCatalog.assetIndex(for: [hiddenNight])
+
+        XCTAssertEqual(index[BuiltInWallpapers.tahoe.night], hiddenNight)
+        XCTAssertEqual(index[BuiltInWallpapers.tahoe.night]?.downloadURL?.absoluteString, hiddenNight.videoURL)
+    }
+
     // MARK: - AerialSubcategory Model Tests
 
     func testAerialSubcategoryDisplayName() {

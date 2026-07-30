@@ -167,6 +167,7 @@ class AerialCatalog: ObservableObject {
     @Published private(set) var isLoaded = false
     @Published private(set) var error: String?
     @Published private(set) var loadState: AerialCatalogLoadState = .loading
+    private var allAssetsByID: [String: AerialAsset] = [:]
 
     private var entriesURL: URL {
         // macOS stores aerial wallpaper manifest in user's Application Support
@@ -186,6 +187,7 @@ class AerialCatalog: ObservableObject {
         let path = entriesURL.path
         assets = []
         categories = []
+        allAssetsByID = [:]
         isLoaded = false
         error = nil
         loadState = .loading
@@ -202,6 +204,11 @@ class AerialCatalog: ObservableObject {
         do {
             let data = try Data(contentsOf: entriesURL)
             let entries = try JSONDecoder().decode(EntriesFile.self, from: data)
+
+            // Keep every manifest asset available for direct lookup. Apple's
+            // time-of-day variants are not always marked for the top-level
+            // picker, but configured presets still need their download URLs.
+            allAssetsByID = Self.assetIndex(for: entries.assets)
 
             // Filter to showInTopLevel assets and sort by preferredOrder
             assets = entries.assets
@@ -246,8 +253,15 @@ class AerialCatalog: ObservableObject {
         return joinedPath.isEmpty ? "the top level" : joinedPath
     }
 
+    static func assetIndex(for assets: [AerialAsset]) -> [String: AerialAsset] {
+        Dictionary(
+            assets.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+    }
+
     func asset(for id: String) -> AerialAsset? {
-        assets.first { $0.id == id }
+        allAssetsByID[id] ?? assets.first { $0.id == id }
     }
 
     func assets(in category: String) -> [AerialAsset] {

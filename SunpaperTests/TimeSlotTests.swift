@@ -128,6 +128,15 @@ final class TimeSlotTests: XCTestCase {
         }
     }
 
+    func testTahoeNightPresetCanBeRecreated() {
+        let slot = BuiltInWallpapers.tahoe.slot(for: .night)
+
+        XCTAssertEqual(slot.name, "Night")
+        assertSolarTrigger(slot.trigger, event: .sunset, offset: 3600)
+        XCTAssertEqual(slot.source.assetID, BuiltInWallpapers.tahoe.night)
+        XCTAssertTrue(slot.isEnabled)
+    }
+
     func testDefaultConfigSlotsAreSorted() {
         let config = WallpaperConfig.default
         let sunTimes = SunCalculator.calculate(for: chicagoLocation)
