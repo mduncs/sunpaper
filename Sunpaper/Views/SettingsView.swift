@@ -28,8 +28,8 @@ private enum SettingsDesign {
         static let settingsMaxWidth: CGFloat = 820
         static let settingsIdealWidth: CGFloat = 860
         static let settingsMinWidth: CGFloat = 720
-        static let settingsIdealHeight: CGFloat = 640
-        static let settingsMinHeight: CGFloat = 540
+        static let settingsIdealHeight: CGFloat = SunpaperSize.settingsIdealHeight
+        static let settingsMinHeight: CGFloat = SunpaperSize.settingsMinHeight
     }
 
     enum Color {
@@ -254,15 +254,6 @@ struct SettingsView: View {
             }
 
             SettingsCard(
-                title: "Wallpaper Downloads",
-                subtitle: "Fetch fresh copies of every Apple aerial used by the active schedule.",
-                systemImage: "icloud.and.arrow.down.fill",
-                tint: SettingsDesign.Color.sky
-            ) {
-                wallpaperDownloadSection
-            }
-
-            SettingsCard(
                 title: "Display Assignment",
                 subtitle: displayModeDescription,
                 systemImage: "display.2",
@@ -283,6 +274,15 @@ struct SettingsView: View {
             }
             .disabled(!viewModel.config.enableSolarTracking)
             .opacity(viewModel.config.enableSolarTracking ? 1 : 0.58)
+
+            SettingsCard(
+                title: "Wallpaper Downloads",
+                subtitle: "Fetch fresh copies of every Apple aerial used by the active schedule.",
+                systemImage: "icloud.and.arrow.down.fill",
+                tint: SettingsDesign.Color.sky
+            ) {
+                wallpaperDownloadSection
+            }
         }
     }
 
@@ -515,7 +515,7 @@ struct SettingsView: View {
                 addSlotMenu(
                     identifier: "addAllDisplaysSlotButton",
                     addCustom: { viewModel.addSlot() },
-                    addTahoePreset: { viewModel.addTahoeSlot(phase: $0) }
+                    addDefaultPreset: { viewModel.addDefaultSlot(phase: $0) }
                 )
             }
 
@@ -523,7 +523,7 @@ struct SettingsView: View {
                 emptySlotState(
                     message: "Add a slot to create the schedule used on every display.",
                     addCustom: { viewModel.addSlot() },
-                    addTahoePreset: { viewModel.addTahoeSlot(phase: $0) }
+                    addDefaultPreset: { viewModel.addDefaultSlot(phase: $0) }
                 )
             } else {
                 ForEach($viewModel.config.slots) { $slot in
@@ -583,7 +583,7 @@ struct SettingsView: View {
                 addSlotMenu(
                     identifier: "addDisplaySlotButton.\(display.uuid)",
                     addCustom: { viewModel.addSlot(for: display.uuid) },
-                    addTahoePreset: { viewModel.addTahoeSlot(phase: $0, for: display.uuid) }
+                    addDefaultPreset: { viewModel.addDefaultSlot(phase: $0, for: display.uuid) }
                 )
             }
 
@@ -591,7 +591,7 @@ struct SettingsView: View {
                 emptySlotState(
                     message: "Add a slot to create the schedule for \(display.displayName).",
                     addCustom: { viewModel.addSlot(for: display.uuid) },
-                    addTahoePreset: { viewModel.addTahoeSlot(phase: $0, for: display.uuid) }
+                    addDefaultPreset: { viewModel.addDefaultSlot(phase: $0, for: display.uuid) }
                 )
             } else {
                 ForEach(displaySlots.indices, id: \.self) { index in
@@ -740,15 +740,15 @@ struct SettingsView: View {
     private func addSlotMenu(
         identifier: String,
         addCustom: @escaping () -> Void,
-        addTahoePreset: @escaping (BuiltInWallpapers.Phase) -> Void
+        addDefaultPreset: @escaping (BuiltInWallpapers.Phase) -> Void
     ) -> some View {
         Menu {
-            Section("Tahoe Defaults") {
+            Section("Defaults") {
                 ForEach(BuiltInWallpapers.Phase.allCases) { phase in
                     Button {
-                        addTahoePreset(phase)
+                        addDefaultPreset(phase)
                     } label: {
-                        Label("Tahoe \(phase.rawValue)", systemImage: phase.systemImage)
+                        Label(phase.rawValue, systemImage: phase.systemImage)
                     }
                 }
             }
@@ -766,14 +766,14 @@ struct SettingsView: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .accessibilityLabel("Add time slot")
-        .accessibilityHint("Adds a Tahoe default or a custom wallpaper time slot.")
+        .accessibilityHint("Adds a default or custom wallpaper time slot.")
         .accessibilityIdentifier(identifier)
     }
 
     private func emptySlotState(
         message: String,
         addCustom: @escaping () -> Void,
-        addTahoePreset: @escaping (BuiltInWallpapers.Phase) -> Void
+        addDefaultPreset: @escaping (BuiltInWallpapers.Phase) -> Void
     ) -> some View {
         EmptySettingsState(
             title: "No Time Slots",
@@ -783,7 +783,7 @@ struct SettingsView: View {
             addSlotMenu(
                 identifier: "emptyStateAddSlotButton",
                 addCustom: addCustom,
-                addTahoePreset: addTahoePreset
+                addDefaultPreset: addDefaultPreset
             )
         }
         .accessibilityIdentifier("emptyTimeSlotsState")
@@ -2034,7 +2034,7 @@ class SettingsViewModel: ObservableObject {
         config.slots.append(newSlot)
     }
 
-    func addTahoeSlot(phase: BuiltInWallpapers.Phase) {
+    func addDefaultSlot(phase: BuiltInWallpapers.Phase) {
         config.slots.append(BuiltInWallpapers.tahoe.slot(for: phase))
     }
 
@@ -2116,7 +2116,7 @@ class SettingsViewModel: ObservableObject {
         config.setSlots(displaySlots, for: displayUUID)
     }
 
-    func addTahoeSlot(phase: BuiltInWallpapers.Phase, for displayUUID: String) {
+    func addDefaultSlot(phase: BuiltInWallpapers.Phase, for displayUUID: String) {
         var displaySlots = config.slots(for: displayUUID)
         displaySlots.append(BuiltInWallpapers.tahoe.slot(for: phase))
         config.setSlots(displaySlots, for: displayUUID)

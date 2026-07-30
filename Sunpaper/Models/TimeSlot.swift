@@ -494,16 +494,17 @@ struct BuiltInWallpapers {
             }
         }
 
-        func slot(for phase: Phase) -> TimeSlot {
+        func slot(for phase: Phase, isEnabled: Bool = true) -> TimeSlot {
             TimeSlot(
                 name: phase.rawValue,
                 trigger: phase.trigger,
-                source: .builtIn(assetID: assetID(for: phase))
+                source: .builtIn(assetID: assetID(for: phase)),
+                isEnabled: isEnabled
             )
         }
 
         var defaultSlots: [TimeSlot] {
-            Phase.allCases.map(slot(for:))
+            Phase.allCases.map { slot(for: $0, isEnabled: false) }
         }
     }
 

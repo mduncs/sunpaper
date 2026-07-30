@@ -26,7 +26,7 @@ enum SunpaperSize {
     static let settingsMinWidth: CGFloat = 720
     static let settingsMinHeight: CGFloat = 560
     static let settingsIdealWidth: CGFloat = 860
-    static let settingsIdealHeight: CGFloat = 680
+    static let settingsIdealHeight: CGFloat = 730
 
     static let iconTile: CGFloat = 32
     static let compactIconTile: CGFloat = 26

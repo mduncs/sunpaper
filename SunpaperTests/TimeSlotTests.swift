@@ -110,6 +110,7 @@ final class TimeSlotTests: XCTestCase {
         XCTAssertEqual(slots[1].source.assetID, BuiltInWallpapers.tahoe.day)
         XCTAssertEqual(slots[2].source.assetID, BuiltInWallpapers.tahoe.evening)
         XCTAssertEqual(slots[3].source.assetID, BuiltInWallpapers.tahoe.night)
+        XCTAssertTrue(slots.allSatisfy { !$0.isEnabled }, "Fresh-install defaults should start disabled")
     }
 
     func testBuiltInWallpaperSetsRemainAvailable() {
@@ -138,7 +139,7 @@ final class TimeSlotTests: XCTestCase {
     }
 
     func testDefaultConfigSlotsAreSorted() {
-        let config = WallpaperConfig.default
+        let config = enabledDefaultConfig()
         let sunTimes = SunCalculator.calculate(for: chicagoLocation)
 
         let sorted = config.sortedSlots(sunTimes: sunTimes)
@@ -154,7 +155,7 @@ final class TimeSlotTests: XCTestCase {
     }
 
     func testCurrentSlotFindsCorrectSlot() {
-        let config = WallpaperConfig.default
+        let config = enabledDefaultConfig()
         let sunTimes = SunCalculator.calculate(for: chicagoLocation)
 
         // Test at different times of day
@@ -174,7 +175,7 @@ final class TimeSlotTests: XCTestCase {
     }
 
     func testNextTransitionReturnsCorrectSlot() {
-        let config = WallpaperConfig.default
+        let config = enabledDefaultConfig()
         let sunTimes = SunCalculator.calculate(for: chicagoLocation)
 
         let sorted = config.sortedSlots(sunTimes: sunTimes)
@@ -277,5 +278,15 @@ final class TimeSlotTests: XCTestCase {
 
         XCTAssertEqual(event, expectedEvent, file: file, line: line)
         XCTAssertEqual(offset, expectedOffset, accuracy: 0.1, file: file, line: line)
+    }
+
+    private func enabledDefaultConfig() -> WallpaperConfig {
+        var config = WallpaperConfig.default
+        config.slots = config.slots.map { slot in
+            var enabledSlot = slot
+            enabledSlot.isEnabled = true
+            return enabledSlot
+        }
+        return config
     }
 }
