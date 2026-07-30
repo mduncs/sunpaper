@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="Sunpaper/Assets.xcassets/AppIcon.appiconset/icon_256x256.png" width="128" alt="Sunpaper icon">
+</p>
+
 # Sunpaper
 
 Sunpaper is a macOS menu bar utility that automatically changes video wallpapers.
