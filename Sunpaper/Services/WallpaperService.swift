@@ -245,72 +245,105 @@ final class WallpaperService: @unchecked Sendable {
 
     /// Set wallpaper by asset ID for all displays.
     /// - Parameter assetID: UUID of the aerial wallpaper (e.g., "4C108785-A7BA-422E-9C79-B0129F1D5550")
-    func setWallpaper(assetID: String) throws {
-        try setWallpaper(assetID: assetID, displayUUID: nil)
+    @MainActor
+    func setWallpaper(assetID: String) async throws {
+        try await setWallpaper(assetID: assetID, displayUUID: nil)
     }
 
     /// Set wallpaper by asset ID for a specific display or all displays.
     /// - Parameters:
     ///   - assetID: UUID of the aerial wallpaper
     ///   - displayUUID: UUID of the display to set wallpaper for, or nil for all displays
-    func setWallpaper(assetID: String, displayUUID: String?) throws {
-        // Check if Index.plist exists
-        guard FileManager.default.fileExists(atPath: indexPlistURL.path) else {
-            throw WallpaperError.plistNotFound
-        }
+    @MainActor
+    static var isChangingWallpaper: Bool { changeGate.isBusy }
 
-        // Check if the aerial video is downloaded
-        guard isAerialDownloaded(assetID: assetID) else {
-            throw WallpaperError.aerialNotDownloaded(assetID: assetID)
-        }
-
-        let plistData = FileManager.default.contents(atPath: indexPlistURL.path)
-        let plan = try makeAerialWallpaperPlan(assetID: assetID, displayUUID: displayUUID, plistData: plistData)
-        logDiagnostics(plan.diagnostics)
-
-        // CRITICAL: Kill wallpaper processes FIRST, then modify plist.
-        // Processes write cached state on exit, so we must kill before modifying.
-        killWallpaperProcesses()
-
-        // Small delay to ensure processes are dead.
-        Thread.sleep(forTimeInterval: Constants.preMutationDelay)
-
-        try applyMutations(plan.mutations)
-
-        // Force reload to pick up new plist values.
-        forceWallpaperReload()
+    @MainActor
+    static func waitForPendingChanges() async {
+        try? await changeGate.perform {}
     }
 
-    /// Set a custom image/video wallpaper from file path.
+    @MainActor
+    private static let changeGate = WallpaperChangeGate()
+
+    @MainActor
+    func setWallpaper(assetID: String, displayUUID: String?) async throws {
+        try await setWallpaper(assetID: assetID, displayUUID: displayUUID, smoothChanges: true)
+    }
+
+    @MainActor
+    func setWallpaper(assetID: String, displayUUID: String?, smoothChanges: Bool) async throws {
+        try await Self.changeGate.perform {
+            guard FileManager.default.fileExists(atPath: indexPlistURL.path) else {
+                throw WallpaperError.plistNotFound
+            }
+            guard isAerialDownloaded(assetID: assetID) else {
+                throw WallpaperError.aerialNotDownloaded(assetID: assetID)
+            }
+            // Snapshot before any process is stopped; recovery uses the exact
+            // configuration, including custom providers and per-Space entries.
+            let original = try Data(contentsOf: indexPlistURL)
+            let plan = try makeAerialWallpaperPlan(assetID: assetID, displayUUID: displayUUID, plistData: original)
+            logDiagnostics(plan.diagnostics)
+            try await WallpaperTransition.shared.perform(videoURL: videoURL(assetID: assetID), displayUUID: displayUUID, smoothChanges: smoothChanges) {
+                // Process waits and plist tools must not block AppKit's cover rendering.
+                try await Task.detached { [self] in
+                    killWallpaperProcesses()
+                    try await Task.sleep(nanoseconds: UInt64(Constants.preMutationDelay * 1_000_000_000))
+                    try applyMutations(plan.mutations)
+                    forceWallpaperReload()
+                }.value
+            } restore: { [self] in
+                try await Task.detached { [self] in
+                    killWallpaperProcesses()
+                    try await Task.sleep(nanoseconds: UInt64(Constants.preMutationDelay * 1_000_000_000))
+                    try original.write(to: indexPlistURL, options: .atomic)
+                    forceWallpaperReload()
+                }.value
+            }
+        }
+    }
+
+    /// Set a supported still image on all displays, or one selected display.
+    @MainActor
     func setCustomWallpaper(path: String) throws {
+        try setCustomWallpaper(path: path, displayUUID: nil)
+    }
+
+    @MainActor
+    func setCustomWallpaper(path: String, displayUUID: String?) throws {
+        let url = try validateCustomWallpaper(path: path)
+        try WallpaperTransition.shared.ensureRecovered()
+        guard !Self.changeGate.isBusy else { throw WallpaperError.transitionInProgress }
+        try setStaticWallpaper(url: url, displayUUID: displayUUID)
+    }
+
+    /// Validation stays fixture-safe; unit tests must never invoke NSWorkspace.
+    @discardableResult
+    func validateCustomWallpaper(path: String) throws -> URL {
         guard FileManager.default.fileExists(atPath: path) else {
             throw WallpaperError.customFileNotFound(path: path)
         }
-
         let url = URL(fileURLWithPath: path)
         let ext = url.pathExtension.lowercased()
-
         if ["heic", "jpg", "jpeg", "png", "tiff", "bmp"].contains(ext) {
-            // Static image - use NSWorkspace
-            try setStaticWallpaper(url: url)
+            return url
         } else if ["mov", "mp4", "m4v"].contains(ext) {
-            // Video - requires more complex plist editing
-            #if DEBUG
-            print("[WallpaperService] Custom video wallpapers not yet fully supported")
-            #endif
             throw WallpaperError.customVideoNotSupported
         } else {
             throw WallpaperError.unsupportedFormat(ext: ext)
         }
     }
 
-    private func setStaticWallpaper(url: URL) throws {
+    @MainActor
+    private func setStaticWallpaper(url: URL, displayUUID: String?) throws {
         let workspace = NSWorkspace.shared
-        guard let screen = NSScreen.main else {
-            throw WallpaperError.noMainScreen
+        let screens = NSScreen.screens.filter { screen in
+            guard let displayUUID else { return true }
+            guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return false }
+            return DisplayManager.shared.getDisplayUUID(displayID: number.uint32Value) == displayUUID
         }
-
-        try workspace.setDesktopImageURL(url, for: screen, options: [:])
+        guard !screens.isEmpty else { throw WallpaperError.noMainScreen }
+        for screen in screens { try workspace.setDesktopImageURL(url, for: screen, options: [:]) }
         #if DEBUG
         print("[WallpaperService] Set static wallpaper: \(url.lastPathComponent)")
         #endif
@@ -374,7 +407,7 @@ final class WallpaperService: @unchecked Sendable {
             mutations.append(WallpaperPlistMutation(
                 keyPath: keyPath.provider,
                 value: .string(payload.providerIdentifier),
-                isRequired: false,
+                isRequired: true,
                 purpose: "aerial provider"
             ))
             mutations.append(WallpaperPlistMutation(
@@ -668,8 +701,14 @@ final class WallpaperService: @unchecked Sendable {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
         process.arguments = [processName]
-        try? process.run()
-        process.waitUntilExit()
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            #if DEBUG
+            print("[WallpaperService] Could not launch killall: \(error)")
+            #endif
+        }
     }
 
     private func logDiagnostics(_ diagnostics: [WallpaperDiagnostic]) {
@@ -703,6 +742,7 @@ final class WallpaperService: @unchecked Sendable {
 }
 
 enum WallpaperError: LocalizedError {
+    case transitionInProgress
     case plistNotFound
     case plistUpdateFailed(keyPath: String)
     case agentRestartFailed
@@ -715,6 +755,8 @@ enum WallpaperError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .transitionInProgress:
+            return "A wallpaper change is already in progress. Try again when it finishes."
         case .plistNotFound:
             return "Wallpaper configuration file not found: Index.plist. Try changing your wallpaper in System Settings first."
         case .plistUpdateFailed(let keyPath):
@@ -738,6 +780,8 @@ enum WallpaperError: LocalizedError {
 
     var recoverySuggestion: String? {
         switch self {
+        case .transitionInProgress:
+            return "A wallpaper change is already in progress. Try again when it finishes."
         case .plistNotFound:
             return "Open System Settings > Wallpaper once so macOS creates the wallpaper Index.plist."
         case .plistUpdateFailed:

@@ -114,7 +114,7 @@ final class DisplayManager: Sendable {
     /// and reconnects. If macOS does not expose those values, keep the existing
     /// `display-XXXXXXXX` fallback so existing per-display config remains
     /// compatible, even though that fallback is not guaranteed to be stable.
-    private func getDisplayUUID(displayID: CGDirectDisplayID) -> String? {
+    func getDisplayUUID(displayID: CGDirectDisplayID) -> String? {
         let vendorID = CGDisplayVendorNumber(displayID)
         let modelID = CGDisplayModelNumber(displayID)
         let serialNumber = CGDisplaySerialNumber(displayID)

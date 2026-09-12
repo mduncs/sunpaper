@@ -36,9 +36,10 @@ Package.resolved
 # Distribution
 dist/
 
-# Local design generators; the release script is public.
+# Local design generators; release and offscreen screenshot tools are public.
 /scripts/*
 !/scripts/release.sh
+!/scripts/screenshots/
 /design/
 
 # Local reverse-engineering and diagnostic work

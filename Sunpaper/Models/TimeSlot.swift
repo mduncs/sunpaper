@@ -237,6 +237,7 @@ struct WallpaperConfig: Codable, Equatable {
     var longitude: Double?
     var displayMode: DisplayMode
     var perDisplayConfigs: [DisplayConfig]
+    var smoothWallpaperChanges: Bool
 
     init(
         slots: [TimeSlot] = [],
@@ -245,7 +246,8 @@ struct WallpaperConfig: Codable, Equatable {
         latitude: Double? = nil,
         longitude: Double? = nil,
         displayMode: DisplayMode = .allDisplays,
-        perDisplayConfigs: [DisplayConfig] = []
+        perDisplayConfigs: [DisplayConfig] = [],
+        smoothWallpaperChanges: Bool = true
     ) {
         self.slots = slots
         self.enableSolarTracking = enableSolarTracking
@@ -254,6 +256,7 @@ struct WallpaperConfig: Codable, Equatable {
         self.longitude = longitude
         self.displayMode = displayMode
         self.perDisplayConfigs = perDisplayConfigs
+        self.smoothWallpaperChanges = smoothWallpaperChanges
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -264,6 +267,7 @@ struct WallpaperConfig: Codable, Equatable {
         case longitude
         case displayMode
         case perDisplayConfigs
+        case smoothWallpaperChanges
     }
 
     private enum EnvelopeCodingKeys: String, CodingKey {
@@ -287,6 +291,7 @@ struct WallpaperConfig: Codable, Equatable {
         longitude = try container.decodeIfPresent(Double.self, forKey: .longitude)
         displayMode = try container.decodeIfPresent(DisplayMode.self, forKey: .displayMode) ?? defaultConfig.displayMode
         perDisplayConfigs = try container.decodeIfPresent([DisplayConfig].self, forKey: .perDisplayConfigs) ?? defaultConfig.perDisplayConfigs
+        smoothWallpaperChanges = try container.decodeIfPresent(Bool.self, forKey: .smoothWallpaperChanges) ?? true
     }
 
     func encode(to encoder: Encoder) throws {
@@ -298,6 +303,7 @@ struct WallpaperConfig: Codable, Equatable {
         try container.encodeIfPresent(longitude, forKey: .longitude)
         try container.encode(displayMode, forKey: .displayMode)
         try container.encode(perDisplayConfigs, forKey: .perDisplayConfigs)
+        try container.encode(smoothWallpaperChanges, forKey: .smoothWallpaperChanges)
     }
 
     static func makeDefault() -> WallpaperConfig {

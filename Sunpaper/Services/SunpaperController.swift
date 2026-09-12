@@ -1,0 +1,293 @@
+import AppKit
+import Combine
+import CoreLocation
+
+/// One owner for persisted preferences and runtime state. Constructing the
+/// controller is inert; only the app delegate starts wallpaper scheduling.
+@MainActor
+final class SunpaperController: ObservableObject {
+    static let shared = SunpaperController()
+
+    @Published private(set) var config: WallpaperConfig
+    @Published private(set) var displays: [DisplayManager.Display]
+    @Published var selectedDisplayUUID: String?
+    @Published var message: String?
+    @Published var isChoosingWallpaper = false
+    @Published private(set) var redownloadingAssets: Set<String> = []
+    let scheduler: SlotScheduler
+    let undoManager = UndoManager()
+    private let defaults: UserDefaults?
+    private let now: () -> Date
+    private var observation: AnyCancellable?
+    private var displayObservation: NSObjectProtocol?
+    private var started = false
+    private final class LocationBox { var coordinate: CLLocationCoordinate2D? }
+    private let location: LocationBox
+
+    init(config initialConfig: WallpaperConfig? = nil,
+         defaults: UserDefaults? = .standard,
+         dependencies: SlotSchedulerDependencies? = nil,
+         displays: [DisplayManager.Display]? = nil,
+         now: @escaping () -> Date = Date.init) {
+        let config = initialConfig ?? WallpaperConfig.decodeCompatibleOrDefault(
+            from: defaults?.data(forKey: WallpaperConfig.userDefaultsKey))
+        self.config = config
+        self.defaults = defaults
+        self.now = now
+        self.displays = displays ?? DisplayManager.shared.getDisplays()
+        let location = LocationBox()
+        if let lat = config.latitude, let lon = config.longitude {
+            location.coordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+        }
+        self.location = location
+        scheduler = SlotScheduler(config: config, locationProvider: { location.coordinate }, dependencies: dependencies)
+        observation = scheduler.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+    }
+
+    func start() {
+        guard !started else { return }
+        started = true
+        scheduler.start()
+        displayObservation = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.displays = DisplayManager.shared.getDisplays()
+                self.scheduler.forceUpdate()
+            }
+        }
+    }
+
+    func stop() {
+        started = false
+        scheduler.stop()
+        if let displayObservation { NotificationCenter.default.removeObserver(displayObservation) }
+        displayObservation = nil
+    }
+
+    var scope: String? {
+        guard config.displayMode == .perDisplay else { return nil }
+        return selectedDisplayUUID ?? displays.first?.uuid ?? config.perDisplayConfigs.first?.displayUUID
+    }
+
+    var scopeName: String {
+        guard let scope else { return "All displays" }
+        return displays.first(where: { $0.uuid == scope })?.name ?? "Disconnected display"
+    }
+
+    var slots: [TimeSlot] {
+        guard let scope else { return config.displayMode == .allDisplays ? config.slots : [] }
+        return config.slots(for: scope)
+    }
+
+    var shownSource: WallpaperSource? {
+        if let scope { return scheduler.confirmedSourcesByDisplay[scope] }
+        return scheduler.confirmedSource
+    }
+
+    var needsLocation: Bool {
+        location.coordinate == nil && slots.contains { slot in
+            if case .solar = slot.trigger { return true }; return false
+        }
+    }
+
+    var collectionName: String {
+        for set in BuiltInWallpapers.allSets {
+            if slots.count == 4 && zip(slots, BuiltInWallpapers.Phase.allCases).allSatisfy({
+                $0.0.source == .builtIn(assetID: set.assetID(for: $0.1))
+            }) { return set.name }
+        }
+        return "Custom"
+    }
+
+    func resolvedTime(for trigger: Trigger, on date: Date? = nil) -> Date? {
+        let date = date ?? now()
+        switch trigger {
+        case .fixed(let hour, let minute):
+            return Calendar.current.date(bySettingHour: hour, minute: minute, second: 0, of: date)
+        case .solar:
+            guard let coordinate = location.coordinate else { return nil }
+            return trigger.resolveTime(sunTimes: SunCalculator.calculate(for: coordinate, on: date), on: date)
+        }
+    }
+
+    var expectedSlot: TimeSlot? {
+        let today = now()
+        let candidates = [-1, 0].flatMap { offset -> [(TimeSlot, Date)] in
+            guard let date = Calendar.current.date(byAdding: .day, value: offset, to: today) else { return [] }
+            return slots.filter { $0.isEnabled && $0.source != .none }.compactMap { slot in
+                resolvedTime(for: slot.trigger, on: date).map { (slot, $0) }
+            }
+        }
+        return candidates.filter { $0.1 <= today }.max(by: { $0.1 < $1.1 })?.0
+    }
+
+    var nextChange: (slot: TimeSlot, date: Date)? {
+        let today = now()
+        let candidates = [0, 1].flatMap { offset -> [(TimeSlot, Date)] in
+            guard let date = Calendar.current.date(byAdding: .day, value: offset, to: today) else { return [] }
+            return slots.filter { $0.isEnabled && $0.source != .none }.compactMap { slot in
+                resolvedTime(for: slot.trigger, on: date).map { (slot, $0) }
+            }
+        }
+        return candidates.filter { $0.1 > today }.min(by: { $0.1 < $1.1 }).map { (slot: $0.0, date: $0.1) }
+    }
+
+    var stateTitle: String {
+        if scheduler.isDownloading { return "Downloading wallpaper…" }
+        if scheduler.isApplying { return "Changing wallpaper…" }
+        if scheduler.lastError != nil { return "Wallpaper needs attention" }
+        switch scheduler.playbackMode {
+        case .paused: return "Schedule paused"
+        case .temporary: return "Temporary wallpaper"
+        case .following:
+            if !slots.contains(where: { $0.isEnabled && $0.source != .none }) { return "No active changes" }
+            if shownSource == nil && needsLocation { return "Choose a location to begin" }
+            return "Following schedule"
+        }
+    }
+
+    var stateDetail: String {
+        switch scheduler.playbackMode {
+        case .paused: return "Keeping this wallpaper until you resume."
+        case .temporary(let until):
+            if let until { return "Schedule resumes \(Self.relativeTime(until, now: now()))." }
+            return "Keeping this wallpaper until you resume."
+        case .following:
+            if let next = nextChange { return "Next: \(next.slot.name) \(Self.relativeTime(next.date, now: now()))" }
+            return needsLocation ? "Solar times need a location. Fixed times work without one." : "Add or enable a change in Your day."
+        }
+    }
+
+    static func relativeTime(_ date: Date, now: Date = Date()) -> String {
+        let time = date.formatted(date: .omitted, time: .shortened)
+        return Calendar.current.isDate(date, inSameDayAs: now) ? "at \(time)" : "tomorrow at \(time)"
+    }
+
+    func setFollowing(_ value: Bool) {
+        var copy = config
+        copy.enableSolarTracking = value
+        replaceConfig(copy)
+        if value && started && scheduler.playbackMode != .following { scheduler.resumeSchedule() }
+    }
+
+    func setSmoothWallpaperChanges(_ value: Bool) {
+        var copy = config
+        copy.smoothWallpaperChanges = value
+        replaceConfig(copy)
+    }
+
+    func apply(_ source: WallpaperSource, duration: WallpaperOverrideDuration = .nextChange) {
+        apply(source, displayUUID: scope, duration: duration)
+    }
+
+    func apply(_ source: WallpaperSource, displayUUID: String?, duration: WallpaperOverrideDuration = .nextChange) {
+        guard started else { return }
+        scheduler.applyWallpaper(source: source, displayUUID: displayUUID, duration: duration)
+    }
+
+    func downloadAgain(assetID: String) {
+        guard started, !redownloadingAssets.contains(assetID),
+              let url = AerialCatalog.shared.asset(for: assetID)?.downloadURL else { return }
+        redownloadingAssets.insert(assetID)
+        Task { [weak self] in
+            guard let self else { return }
+            defer { redownloadingAssets.remove(assetID) }
+            do {
+                try await WallpaperService.shared.redownloadAerial(assetID: assetID, from: url)
+                message = "\(wallpaperName(.builtIn(assetID: assetID))) is downloaded again. Use Retry if the wallpaper still needs to change."
+            } catch { message = "Couldn’t download the wallpaper: \(error.localizedDescription)" }
+        }
+    }
+
+    func change(_ action: String, _ edit: (inout WallpaperConfig) -> Void) {
+        var copy = config
+        edit(&copy)
+        replaceConfig(copy, undoAction: action)
+    }
+
+    private func replaceConfig(_ newConfig: WallpaperConfig, undoAction: String? = nil) {
+        guard newConfig != config else { return }
+        if let undoAction {
+            let previous = config
+            undoManager.registerUndo(withTarget: self) { target in
+                var restored = previous
+                // Pause/resume is not an edit to the schedule. Undoing an older
+                // edit must never silently start a deliberately paused day.
+                if previous.enableSolarTracking == newConfig.enableSolarTracking {
+                    restored.enableSolarTracking = target.config.enableSolarTracking
+                }
+                if previous.smoothWallpaperChanges == newConfig.smoothWallpaperChanges {
+                    restored.smoothWallpaperChanges = target.config.smoothWallpaperChanges
+                }
+                target.replaceConfig(restored, undoAction: undoAction)
+            }
+            undoManager.setActionName(undoAction)
+        }
+        config = newConfig
+        location.coordinate = nil
+        if let lat = config.latitude, let lon = config.longitude {
+            location.coordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+        }
+        if let defaults {
+            do {
+                let envelope = config.persistenceEnvelope(
+                    createdByAppVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+                    updatedAt: now())
+                defaults.set(try JSONEncoder().encode(envelope), forKey: WallpaperConfig.userDefaultsKey)
+            } catch { message = "Your changes couldn’t be saved: \(error.localizedDescription)" }
+        }
+        // An inactive scheduler resolves state but never applies wallpaper.
+        scheduler.updateConfig(config)
+    }
+
+    func editSlots(_ action: String, _ edit: (inout [TimeSlot]) -> Void) {
+        let target = scope
+        guard config.displayMode == .allDisplays || target != nil else { return }
+        editSlots(action, displayUUID: target, edit)
+    }
+
+    /// An editor captures this scope when presented. Changing the selected
+    /// display in another window must not retarget an already-open edit.
+    func editSlots(_ action: String, displayUUID target: String?, _ edit: (inout [TimeSlot]) -> Void) {
+        change(action) { config in
+            var slots = target.map { id in config.perDisplayConfigs.first(where: { $0.displayUUID == id })?.slots ?? [] } ?? config.slots
+            edit(&slots)
+            if let target { config.setSlots(slots, for: target) } else { config.slots = slots }
+        }
+    }
+
+    func updateSlot(_ slot: TimeSlot) {
+        updateSlot(slot, displayUUID: scope)
+    }
+
+    func updateSlot(_ slot: TimeSlot, displayUUID: String?) {
+        editSlots("Edit change", displayUUID: displayUUID) { slots in
+            if let index = slots.firstIndex(where: { $0.id == slot.id }) { slots[index] = slot }
+        }
+    }
+
+    func useCollection(_ set: BuiltInWallpapers.WallpaperSet) {
+        editSlots("Use \(set.name) collection") { $0 = BuiltInWallpapers.Phase.allCases.map { set.slot(for: $0) } }
+    }
+
+    func setDisplayMode(_ mode: DisplayMode) {
+        change("Change display mode") { config in
+            if mode == .perDisplay {
+                for display in displays where !config.perDisplayConfigs.contains(where: { $0.displayUUID == display.uuid }) {
+                    config.setSlots(config.slots, for: display.uuid)
+                }
+            }
+            config.displayMode = mode
+        }
+    }
+
+    func setLocation(name: String, latitude: Double, longitude: Double) {
+        change("Change location") { config in
+            config.locationName = name
+            config.latitude = latitude
+            config.longitude = longitude
+        }
+    }
+}

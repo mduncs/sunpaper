@@ -245,6 +245,23 @@ final class TimeSlotTests: XCTestCase {
         XCTAssertEqual(decoded.enableSolarTracking, config.enableSolarTracking)
     }
 
+    func testLegacyPreferencesKeepSmoothingEnabledAndExplicitOptOutRoundTrips() throws {
+        var config = WallpaperConfig.default
+        config.smoothWallpaperChanges = false
+        let data = try JSONEncoder().encode(config)
+        let decoded = try JSONDecoder().decode(WallpaperConfig.self, from: data)
+        XCTAssertFalse(decoded.smoothWallpaperChanges)
+        let envelope = try JSONEncoder().encode(config.persistenceEnvelope())
+        XCTAssertEqual(WallpaperConfig.decodeCompatible(from: envelope), config)
+
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        legacy.removeValue(forKey: "smoothWallpaperChanges")
+        let legacyData = try JSONSerialization.data(withJSONObject: legacy)
+        XCTAssertTrue(try XCTUnwrap(WallpaperConfig.decodeCompatible(from: legacyData)).smoothWallpaperChanges)
+        let legacyEnvelope = try JSONSerialization.data(withJSONObject: ["schemaVersion": 1, "wallpaperConfig": legacy])
+        XCTAssertTrue(try XCTUnwrap(WallpaperConfig.decodeCompatible(from: legacyEnvelope)).smoothWallpaperChanges)
+    }
+
     // MARK: - DST Edge Case
 
     func testFixedTimeDSTSpringForward() {

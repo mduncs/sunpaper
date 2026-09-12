@@ -2,6 +2,7 @@ import XCTest
 import AppKit
 @testable import Sunpaper
 
+@MainActor
 final class WallpaperServiceTests: XCTestCase {
     // These tests must not call setWallpaper(assetID:) because that mutates the
     // user's real macOS wallpaper Index.plist.
@@ -176,7 +177,7 @@ final class WallpaperServiceTests: XCTestCase {
         let service = WallpaperService.shared
         let nonExistentPath = "/tmp/nonexistent_\(UUID().uuidString).jpg"
 
-        XCTAssertThrowsError(try service.setCustomWallpaper(path: nonExistentPath)) { error in
+        XCTAssertThrowsError(try service.validateCustomWallpaper(path: nonExistentPath)) { error in
             guard let wallpaperError = error as? WallpaperError else {
                 XCTFail("Expected WallpaperError, got \(type(of: error))")
                 return
@@ -206,7 +207,7 @@ final class WallpaperServiceTests: XCTestCase {
 
             let service = WallpaperService.shared
 
-            XCTAssertThrowsError(try service.setCustomWallpaper(path: tempFile.path)) { error in
+            XCTAssertThrowsError(try service.validateCustomWallpaper(path: tempFile.path)) { error in
                 guard let wallpaperError = error as? WallpaperError else {
                     XCTFail("Expected WallpaperError for .\(ext), got \(type(of: error))")
                     return
@@ -238,7 +239,7 @@ final class WallpaperServiceTests: XCTestCase {
             let service = WallpaperService.shared
 
             do {
-                try service.setCustomWallpaper(path: tempFile.path)
+                try service.validateCustomWallpaper(path: tempFile.path)
                 // If it succeeds, that's fine (we have a screen)
             } catch let error as WallpaperError {
                 // Should not be format/file errors
@@ -249,7 +250,7 @@ final class WallpaperServiceTests: XCTestCase {
                     XCTFail(".\(ext) file exists but got customFileNotFound error")
                 case .customVideoNotSupported:
                     XCTFail(".\(ext) is an image but got customVideoNotSupported error")
-                case .noMainScreen, .plistNotFound, .plistUpdateFailed, .agentRestartFailed, .aerialNotDownloaded, .downloadFailed:
+                case .transitionInProgress, .noMainScreen, .plistNotFound, .plistUpdateFailed, .agentRestartFailed, .aerialNotDownloaded, .downloadFailed:
                     // These are acceptable - system/environment issues, not format issues
                     break
                 }
@@ -275,7 +276,7 @@ final class WallpaperServiceTests: XCTestCase {
 
             let service = WallpaperService.shared
 
-            XCTAssertThrowsError(try service.setCustomWallpaper(path: tempFile.path)) { error in
+            XCTAssertThrowsError(try service.validateCustomWallpaper(path: tempFile.path)) { error in
                 guard let wallpaperError = error as? WallpaperError else {
                     XCTFail("Expected WallpaperError for .\(ext), got \(type(of: error))")
                     return
@@ -305,7 +306,7 @@ final class WallpaperServiceTests: XCTestCase {
 
         // Should not throw unsupportedFormat
         do {
-            try service.setCustomWallpaper(path: uppercaseFile.path)
+            try service.validateCustomWallpaper(path: uppercaseFile.path)
         } catch let error as WallpaperError {
             switch error {
             case .unsupportedFormat:
@@ -329,7 +330,7 @@ final class WallpaperServiceTests: XCTestCase {
         }
 
         do {
-            try service.setCustomWallpaper(path: mixedFile.path)
+            try service.validateCustomWallpaper(path: mixedFile.path)
         } catch let error as WallpaperError {
             switch error {
             case .unsupportedFormat:
