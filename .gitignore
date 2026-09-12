@@ -36,25 +36,17 @@ Package.resolved
 # Distribution
 dist/
 
-# Local design generators; release and offscreen screenshot tools are public.
-/scripts/*
-!/scripts/release.sh
-!/scripts/screenshots/
+# Historical local work (kept ignored if restored from an external archive)
+/scripts/generate_*.py
 /design/
-
-# Local reverse-engineering and diagnostic work
 /diagnostics/
 /docs/
 /tools/
+notes-to-self.md
+reinstall.sh
 
 # The landing site is versioned and deployed from its own Sites repository.
 /site/
 
 # Profiling
 *.profraw
-
-# Private notes
-notes-to-self.md
-
-# Local dev scripts
-reinstall.sh
