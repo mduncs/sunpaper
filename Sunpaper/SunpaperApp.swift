@@ -77,7 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             scheduleWindow = makeWindow(
                 title: "Sunpaper", view: ScheduleView(controller: controller, openSettings: { [weak self] in self?.openSettings() }),
                 size: NSSize(width: SunpaperSize.scheduleWidth, height: SunpaperSize.scheduleHeight),
-                minimum: NSSize(width: 720, height: 600), autosave: "SunpaperYourDay")
+                minimum: NSSize(width: SunpaperSize.scheduleMinWidth, height: SunpaperSize.scheduleMinHeight), autosave: "SunpaperYourDay")
         }
         show(scheduleWindow)
     }

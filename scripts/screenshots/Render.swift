@@ -31,6 +31,7 @@ private struct RenderWallpaper: SlotSchedulerWallpaperServicing {
 
 @main struct Render {
     @MainActor static func main() async throws {
+        SettingsView.appBundleURL = URL(fileURLWithPath: "/Applications/Sunpaper.app")
         NSApplication.shared.setActivationPolicy(.prohibited)
         guard CommandLine.arguments.count == 2 else {
             throw NSError(domain: "SunpaperScreenshots", code: 1, userInfo: [NSLocalizedDescriptionKey: "Usage: render OUTPUT_DIRECTORY"])
@@ -52,18 +53,19 @@ private struct RenderWallpaper: SlotSchedulerWallpaperServicing {
         defer { controller.stop() }
         await controller.scheduler.waitForPendingApplication()
         for dark in [true, false] {
-            try await capture(ScheduleView(controller: controller), name: dark ? "your-day" : "your-day-light", size: .init(width: 780, height: 640), dark: dark, directory: directory)
+            try await capture(ScheduleView(controller: controller), name: dark ? "your-day" : "your-day-light", size: .init(width: SunpaperSize.scheduleWidth, height: SunpaperSize.scheduleHeight), dark: dark, directory: directory)
             try await capture(SettingsView(controller: controller), name: dark ? "settings" : "settings-light", size: .init(width: 580, height: 800), dark: dark, directory: directory)
         }
-        try await capture(MenuBarView(controller: controller, onChooseWallpaper: {}, onEditSchedule: {}, onOpenSettings: {}, onQuit: {}), name: "menu", size: .init(width: 328, height: 384), dark: true, directory: directory)
+        try await capture(MenuBarView(controller: controller, onChooseWallpaper: {}, onEditSchedule: {}, onOpenSettings: {}, onQuit: {}), name: "menu", size: .init(width: SunpaperSize.popoverWidth, height: SunpaperSize.popoverHeight), dark: true, directory: directory)
         let temporaryAssetID = AerialCatalog.shared.assets.first(where: { $0.displayName == "Golden Gate Sunset" })?.id ?? BuiltInWallpapers.sequoia.evening
         controller.apply(.builtIn(assetID: temporaryAssetID))
         await controller.scheduler.waitForPendingApplication()
-        try await capture(MenuBarView(controller: controller, onChooseWallpaper: {}, onEditSchedule: {}, onOpenSettings: {}, onQuit: {}), name: "menu-temporary", size: .init(width: 328, height: 384), dark: true, directory: directory)
+        try await capture(MenuBarView(controller: controller, onChooseWallpaper: {}, onEditSchedule: {}, onOpenSettings: {}, onQuit: {}), name: "menu-temporary", size: .init(width: SunpaperSize.popoverWidth, height: SunpaperSize.popoverHeight), dark: true, directory: directory)
         controller.setFollowing(false)
-        try await capture(MenuBarView(controller: controller, onChooseWallpaper: {}, onEditSchedule: {}, onOpenSettings: {}, onQuit: {}), name: "menu-paused", size: .init(width: 328, height: 384), dark: true, directory: directory)
-        try await capture(WallpaperGridPicker(selectedSource: .constant(.builtIn(assetID: BuiltInWallpapers.tahoe.day)), title: "Wallpaper for Day", confirmationTitle: "Use for Day", onSelect: { _ in }), name: "wallpaper-picker", size: .init(width: 820, height: 650), dark: true, directory: directory)
-        try await capture(TimingEditor(controller: controller, trigger: .hoursBeforeSunset(1), onSave: { _ in }), name: "timing-editor", size: .init(width: 384, height: 284), dark: true, directory: directory)
+        try await capture(MenuBarView(controller: controller, onChooseWallpaper: {}, onEditSchedule: {}, onOpenSettings: {}, onQuit: {}), name: "menu-paused", size: .init(width: SunpaperSize.popoverWidth, height: SunpaperSize.popoverHeight), dark: true, directory: directory)
+        try await capture(WallpaperGridPicker(selectedSource: .constant(.builtIn(assetID: BuiltInWallpapers.tahoe.day)), title: "Wallpaper for Day", confirmationTitle: "Use for Day", onSelect: { _ in }), name: "wallpaper-picker", size: .init(width: 760, height: 660), dark: true, directory: directory)
+        try await capture(TimingEditor(controller: controller, trigger: .hoursBeforeSunset(1), onSave: { _ in }), name: "timing-editor", size: .init(width: 400, height: 500), dark: true, directory: directory)
+        try await capture(AddChangeSheet(controller: controller, onAdd: { _, _ in }), name: "add-change", size: .init(width: 460, height: 560), dark: true, directory: directory)
         try await capture(LocationChooser(controller: controller), name: "location-picker", size: .init(width: 478, height: 460), dark: true, directory: directory)
         controller.setSmoothWallpaperChanges(false)
         try await capture(SettingsView(controller: controller), name: "settings-smoothing-off", size: .init(width: 580, height: 800), dark: true, directory: directory)

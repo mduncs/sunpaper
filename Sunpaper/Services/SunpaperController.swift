@@ -17,6 +17,7 @@ final class SunpaperController: ObservableObject {
     let scheduler: SlotScheduler
     let undoManager = UndoManager()
     private let defaults: UserDefaults?
+    private let hasNewerStoredSchema: Bool
     private let now: () -> Date
     private var observation: AnyCancellable?
     private var displayObservation: NSObjectProtocol?
@@ -29,19 +30,30 @@ final class SunpaperController: ObservableObject {
          dependencies: SlotSchedulerDependencies? = nil,
          displays: [DisplayManager.Display]? = nil,
          now: @escaping () -> Date = Date.init) {
-        let config = initialConfig ?? WallpaperConfig.decodeCompatibleOrDefault(
-            from: defaults?.data(forKey: WallpaperConfig.userDefaultsKey))
+        let storedData = defaults?.data(forKey: WallpaperConfig.userDefaultsKey)
+        let decodedConfig = storedData.flatMap { WallpaperConfig.decodeCompatible(from: $0) }
+        let hasNewerStoredSchema = storedData.flatMap { WallpaperConfig.storedSchemaVersion(from: $0) }
+            .map { $0 > WallpaperConfig.currentSchemaVersion } ?? false
+        if let storedData, decodedConfig == nil,
+           defaults?.object(forKey: WallpaperConfig.unreadableBackupKey) == nil {
+            defaults?.set(storedData, forKey: WallpaperConfig.unreadableBackupKey)
+        }
+        let config = initialConfig ?? decodedConfig ?? .default
         self.config = config
         self.defaults = defaults
+        self.hasNewerStoredSchema = hasNewerStoredSchema
         self.now = now
         self.displays = displays ?? DisplayManager.shared.getDisplays()
         let location = LocationBox()
-        if let lat = config.latitude, let lon = config.longitude {
-            location.coordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-        }
+        location.coordinate = Self.validCoordinate(latitude: config.latitude, longitude: config.longitude)
         self.location = location
         scheduler = SlotScheduler(config: config, locationProvider: { location.coordinate }, dependencies: dependencies)
         observation = scheduler.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        if hasNewerStoredSchema {
+            message = "A newer version of Sunpaper saved these settings. Changes made here won’t be saved by this version."
+        } else if storedData != nil && decodedConfig == nil {
+            message = "Your settings couldn’t be read. Defaults are in use, and the old data was kept."
+        }
     }
 
     func start() {
@@ -99,6 +111,14 @@ final class SunpaperController: ObservableObject {
             }) { return set.name }
         }
         return "Custom"
+    }
+
+    /// The schedule's clock, so views agree with injected time.
+    var currentDate: Date { now() }
+
+    var polarCondition: SunCalculator.PolarCondition? {
+        guard let coordinate = location.coordinate else { return nil }
+        return SunCalculator.calculate(for: coordinate, on: currentDate).polarCondition
     }
 
     func resolvedTime(for trigger: Trigger, on date: Date? = nil) -> Date? {
@@ -167,7 +187,7 @@ final class SunpaperController: ObservableObject {
 
     func setFollowing(_ value: Bool) {
         var copy = config
-        copy.enableSolarTracking = value
+        copy.isFollowingSchedule = value
         replaceConfig(copy)
         if value && started && scheduler.playbackMode != .following { scheduler.resumeSchedule() }
     }
@@ -215,8 +235,8 @@ final class SunpaperController: ObservableObject {
                 var restored = previous
                 // Pause/resume is not an edit to the schedule. Undoing an older
                 // edit must never silently start a deliberately paused day.
-                if previous.enableSolarTracking == newConfig.enableSolarTracking {
-                    restored.enableSolarTracking = target.config.enableSolarTracking
+                if previous.isFollowingSchedule == newConfig.isFollowingSchedule {
+                    restored.isFollowingSchedule = target.config.isFollowingSchedule
                 }
                 if previous.smoothWallpaperChanges == newConfig.smoothWallpaperChanges {
                     restored.smoothWallpaperChanges = target.config.smoothWallpaperChanges
@@ -226,11 +246,10 @@ final class SunpaperController: ObservableObject {
             undoManager.setActionName(undoAction)
         }
         config = newConfig
-        location.coordinate = nil
-        if let lat = config.latitude, let lon = config.longitude {
-            location.coordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-        }
-        if let defaults {
+        location.coordinate = Self.validCoordinate(latitude: config.latitude, longitude: config.longitude)
+        if hasNewerStoredSchema {
+            message = "A newer version of Sunpaper saved these settings. Changes made here won’t be saved by this version."
+        } else if let defaults {
             do {
                 let envelope = config.persistenceEnvelope(
                     createdByAppVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
@@ -284,10 +303,20 @@ final class SunpaperController: ObservableObject {
     }
 
     func setLocation(name: String, latitude: Double, longitude: Double) {
+        guard Self.validCoordinate(latitude: latitude, longitude: longitude) != nil else {
+            message = "Choose a valid location to use solar times."
+            return
+        }
         change("Change location") { config in
             config.locationName = name
             config.latitude = latitude
             config.longitude = longitude
         }
+    }
+
+    private static func validCoordinate(latitude: Double?, longitude: Double?) -> CLLocationCoordinate2D? {
+        guard let latitude, let longitude, latitude.isFinite, longitude.isFinite else { return nil }
+        let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        return CLLocationCoordinate2DIsValid(coordinate) ? coordinate : nil
     }
 }

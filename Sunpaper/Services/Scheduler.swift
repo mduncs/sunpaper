@@ -105,6 +105,7 @@ struct SlotSchedulerDependencies {
     var wallpaperService: SlotSchedulerWallpaperServicing
     var displayProvider: SlotSchedulerDisplayProviding
     var aerialCatalog: SlotSchedulerAerialCatalogResolving
+    var hasCapturePermission: @MainActor () -> Bool = { true }
 
     @MainActor static var live: SlotSchedulerDependencies {
         SlotSchedulerDependencies(
@@ -116,7 +117,8 @@ struct SlotSchedulerDependencies {
             wakeObserver: WorkspaceSlotSchedulerWakeObserver(),
             wallpaperService: WallpaperService.shared,
             displayProvider: DisplayManager.shared,
-            aerialCatalog: LiveSlotSchedulerAerialCatalogResolver()
+            aerialCatalog: LiveSlotSchedulerAerialCatalogResolver(),
+            hasCapturePermission: { WallpaperTransition.hasCapturePermission }
         )
     }
 }
@@ -156,6 +158,7 @@ class SlotScheduler: ObservableObject {
     @Published private(set) var confirmedSource: WallpaperSource?
     @Published private(set) var confirmedSourcesByDisplay: [String: WallpaperSource] = [:]
     @Published private(set) var isApplying = false
+    @Published private(set) var smoothingUnavailableBecauseOfPermission = false
     @Published private(set) var playbackMode: WallpaperPlaybackMode
 
     private struct ApplicationTarget: Equatable {
@@ -201,7 +204,7 @@ class SlotScheduler: ObservableObject {
         self.config = config
         self.locationProvider = locationProvider
         self.dependencies = dependencies ?? .live
-        self.playbackMode = config.enableSolarTracking ? .following : .paused
+        self.playbackMode = config.isFollowingSchedule ? .following : .paused
     }
 
     // MARK: - Public API
@@ -238,7 +241,7 @@ class SlotScheduler: ObservableObject {
     }
 
     func updateConfig(_ newConfig: WallpaperConfig) {
-        let executionChanged = config.enableSolarTracking != newConfig.enableSolarTracking
+        let executionChanged = config.isFollowingSchedule != newConfig.isFollowingSchedule
         let smoothingChanged = config.smoothWallpaperChanges != newConfig.smoothWallpaperChanges
         config = newConfig
         if executionChanged {
@@ -246,13 +249,13 @@ class SlotScheduler: ObservableObject {
             prefetchTask?.cancel()
             lastAppliedTargets = nil
             failedManualJobs = nil
-            playbackMode = config.enableSolarTracking ? .following : .paused
+            playbackMode = config.isFollowingSchedule ? .following : .paused
             invalidateOverrideTimer()
         }
         // A temporary selection keeps its original deadline across edits. In
         // particular, renaming a slot/location must not extend the override.
-        // A smoothing change can unblock an earlier capture failure. It is
-        // not part of wallpaper identity, so successful/in-flight work stays put.
+        // Smoothing is not part of wallpaper identity, so successful/in-flight
+        // work stays put.
         updateNow(retryFailures: executionChanged || smoothingChanged)
         scheduleNextUpdate()
     }
@@ -287,7 +290,7 @@ class SlotScheduler: ObservableObject {
     }
 
     func resumeSchedule() {
-        config.enableSolarTracking = true
+        config.isFollowingSchedule = true
         playbackMode = .following
         invalidateOverrideTimer()
         cancelApplication()
@@ -414,7 +417,13 @@ class SlotScheduler: ObservableObject {
                 try await download(assetID: assetID, from: url)
             }
             try Task.checkCancellation()
-            try await dependencies.wallpaperService.setWallpaper(assetID: assetID, displayUUID: displayUUID, smoothChanges: smoothChanges)
+            let hasCapturePermission = dependencies.hasCapturePermission()
+            let useSmoothing = smoothChanges && hasCapturePermission
+            if hasCapturePermission || smoothChanges {
+                smoothingUnavailableBecauseOfPermission = !hasCapturePermission
+            }
+            try await dependencies.wallpaperService.setWallpaper(
+                assetID: assetID, displayUUID: displayUUID, smoothChanges: useSmoothing)
         case .custom(let path):
             try Task.checkCancellation()
             try dependencies.wallpaperService.setCustomWallpaper(path: path, displayUUID: displayUUID)
@@ -538,7 +547,7 @@ class SlotScheduler: ObservableObject {
 
     private func expireOverrideIfNeeded(at date: Date) {
         guard case .temporary(let until) = playbackMode, let until, until <= date else { return }
-        playbackMode = config.enableSolarTracking ? .following : .paused
+        playbackMode = config.isFollowingSchedule ? .following : .paused
         invalidateOverrideTimer()
         cancelApplication()
         lastAppliedTargets = nil

@@ -8,35 +8,69 @@ struct SettingsView: View {
     @State private var showLocation = false
     @State private var launchAtLogin = false
     @State private var loginNeedsApproval = false
+    @State private var loginError: String?
     @State private var captureAllowed = false
-    @State private var error: String?
+    @State private var capturePermissionRequested = false
     @State private var showReset = false
     @State private var clearScope: String?
     @State private var clearScopeName = "All displays"
 
     var body: some View {
         Form {
-            Section("General") {
-                Toggle("Open Sunpaper at login", isOn: Binding(get: { launchAtLogin }, set: { setLaunchAtLogin($0) }))
-                if loginNeedsApproval {
-                    LabeledContent("Login item needs approval") {
-                        Button("Open Login Items…") { SMAppService.openSystemSettingsLoginItems() }
+            Section {
+                HStack(spacing: 14) {
+                    Image(systemName: "sun.horizon.fill")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(.white, SunpaperSky.gold)
+                        .frame(width: 44, height: 44)
+                        .background(LinearGradient(colors: [SunpaperSky.glow, SunpaperSky.twilight, SunpaperSky.night], startPoint: .top, endPoint: .bottom),
+                                    in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Sunpaper").font(.title3.weight(.semibold))
+                        Text([Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String, "Follows your day."]
+                            .compactMap { $0 }.joined(separator: " · "))
+                            .font(.caption).foregroundStyle(.secondary)
                     }
+                    Spacer()
+                    StatusDot(title: controller.stateTitle, tone: controller.statusTone)
+                }
+                .padding(.vertical, 4)
+            }
+            Section("General") {
+                Toggle(isOn: Binding(get: { launchAtLogin }, set: { setLaunchAtLogin($0) })) {
+                    Label { Text("Open Sunpaper at login") } icon: { SymbolTile(systemName: "power", color: .gray) }
+                }
+                if loginNeedsApproval {
+                    Text("Approve Sunpaper in Login Items.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button("Open Login Items…") { SMAppService.openSystemSettingsLoginItems() }
+                }
+                if !isInApplications {
+                    Text("Login will open this copy. Move Sunpaper to Applications first.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if let loginError {
+                    Text(loginError).font(.caption).foregroundStyle(.red)
                 }
             }
             Section {
-                LabeledContent("Location", value: controller.config.locationName ?? "Not set")
-                HStack {
-                    Text("Used for sunrise and sunset. Fixed times don’t need a location.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Change…") { showLocation = true }
+                LabeledContent {
+                    HStack(spacing: 10) {
+                        Text(controller.config.locationName ?? "Not set")
+                        Button(controller.config.locationName == nil ? "Choose…" : "Change…") { showLocation = true }
+                    }
+                } label: {
+                    Label { Text("Location") } icon: { SymbolTile(systemName: "location.fill", color: .blue) }
                 }
+                Text(sunTimesSummary).font(.caption).foregroundStyle(.secondary)
             } header: { Text("Sunrise & sunset") }
             Section {
-                Picker("Wallpaper schedule", selection: Binding(get: { controller.config.displayMode }, set: { controller.setDisplayMode($0) })) {
+                Picker(selection: Binding(get: { controller.config.displayMode }, set: { controller.setDisplayMode($0) })) {
                     Text("Same on all displays").tag(DisplayMode.allDisplays)
                     Text("Different for each display").tag(DisplayMode.perDisplay)
+                } label: {
+                    Label { Text("Wallpaper schedule") } icon: { SymbolTile(systemName: "display.2", color: .indigo) }
                 }
                 Text(controller.config.displayMode == .allDisplays
                      ? "One schedule follows you across your displays."
@@ -44,20 +78,28 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             } header: { Text("Displays") }
             Section {
-                Toggle("Smooth wallpaper changes", isOn: Binding(
+                Toggle(isOn: Binding(
                     get: { controller.config.smoothWallpaperChanges },
-                    set: { controller.setSmoothWallpaperChanges($0) }))
+                    set: { controller.setSmoothWallpaperChanges($0) })) {
+                    Label { Text("Smooth wallpaper changes") } icon: { SymbolTile(systemName: "sparkles", color: .orange) }
+                }
                 Text(controller.config.smoothWallpaperChanges
                      ? "Keep the previous wallpaper visible while the next one loads."
                      : "Your schedule still works. Changes may briefly flash gray.")
                     .font(.caption).foregroundStyle(.secondary)
-                LabeledContent("Screen capture access") {
-                    Label(captureAllowed ? "Allowed" : (controller.config.smoothWallpaperChanges ? "Not allowed" : "Not needed"), systemImage: captureAllowed ? "checkmark.circle" : "circle")
-                        .foregroundStyle(.secondary)
-                }
                 if controller.config.smoothWallpaperChanges {
+                    LabeledContent {
+                        Label(captureAllowed ? "Allowed" : "Not allowed", systemImage: captureAllowed ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(captureAllowed ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
+                    } label: {
+                        Label { Text("Screen capture access") } icon: { SymbolTile(systemName: "rectangle.dashed", color: .purple) }
+                    }
                     Text("Only the wallpaper is captured—not your apps or audio. Nothing is recorded or saved.")
                         .font(.caption).foregroundStyle(.secondary)
+                    if controller.scheduler.smoothingUnavailableBecauseOfPermission || !captureAllowed {
+                        Text("Changes happen instantly until screen capture is allowed.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
                 DisclosureGroup("Why is this needed?") {
                     VStack(alignment: .leading, spacing: 8) {
@@ -71,7 +113,11 @@ struct SettingsView: View {
                 if controller.config.smoothWallpaperChanges && !captureAllowed {
                     Button("Allow screen capture…") {
                         WallpaperTransition.requestCapturePermission()
+                        capturePermissionRequested = true
                         captureAllowed = WallpaperTransition.hasCapturePermission
+                    }
+                    if capturePermissionRequested {
+                        Button("Quit & Reopen") { WallpaperTransition.relaunchApp() }
                     }
                 }
                 if transition.needsRecovery {
@@ -90,7 +136,7 @@ struct SettingsView: View {
             } header: { Text("Smooth changes") }
             Section {
                 HStack {
-                    Text("Clear this schedule").font(.callout)
+                    Label { Text("Clear this schedule") } icon: { SymbolTile(systemName: "trash.fill", color: .red) }
                     Spacer()
                     Button("Clear…", role: .destructive) {
                         clearScope = controller.scope; clearScopeName = controller.scopeName; showReset = true
@@ -98,12 +144,7 @@ struct SettingsView: View {
                 }
                 Text("Removes changes for \(controller.scopeName.lowercased()). Location and other settings are kept. You can undo this.")
                     .font(.caption).foregroundStyle(.secondary)
-            }
-            HStack {
-                Text("Sunpaper \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")")
-                Spacer()
-                Text("Follows your day.")
-            }.font(.caption).foregroundStyle(.tertiary)
+            } header: { Text("Schedule") }
         }
         .formStyle(.grouped)
         .tint(SunpaperColor.accent)
@@ -111,27 +152,74 @@ struct SettingsView: View {
         .onAppear(perform: refreshAccess)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refreshAccess() }
         .sheet(isPresented: $showLocation) { LocationChooser(controller: controller) }
-        .alert("Couldn’t update login item", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
-            Button("OK") { error = nil }
-        } message: { Text(error ?? "") }
         .confirmationDialog("Clear the schedule for \(clearScopeName)?", isPresented: $showReset, titleVisibility: .visible) {
             Button("Clear schedule", role: .destructive) { controller.editSlots("Clear schedule", displayUUID: clearScope) { $0.removeAll() } }
             Button("Cancel", role: .cancel) {}
         } message: { Text("The current wallpaper stays in place. Your location and other settings are kept.") }
     }
 
+    private var sunTimesSummary: String {
+        switch controller.polarCondition {
+        case .polarDay:
+            return "Today the sun doesn’t set here (midnight sun). Solar changes use estimated times."
+        case .polarNight:
+            return "Today the sun doesn’t rise here (polar night). Solar changes use estimated times."
+        case .normal, nil:
+            break
+        }
+        let time = { (event: SolarEvent) in
+            controller.resolvedTime(for: .solar(event: event, offset: 0))?.formatted(date: .omitted, time: .shortened)
+        }
+        guard let sunrise = time(.sunrise), let sunset = time(.sunset) else {
+            return "Needed for changes that follow the sun. Fixed times work without one."
+        }
+        return "Today: sunrise \(sunrise) · sunset \(sunset). Fixed times don’t need a location."
+    }
+
+    /// Where login will launch from; the screenshot renderer points this at /Applications.
+    static var appBundleURL = Bundle.main.bundleURL
+
+    private var isInApplications: Bool {
+        let path = Self.appBundleURL.standardizedFileURL.path
+        let userApplications = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications").path
+        return !path.contains("/AppTranslocation/") &&
+            (path.hasPrefix("/Applications/") || path.hasPrefix(userApplications + "/"))
+    }
+
     private func refreshAccess() {
-        launchAtLogin = SMAppService.mainApp.status == .enabled
-        loginNeedsApproval = SMAppService.mainApp.status == .requiresApproval
+        let status = SMAppService.mainApp.status
+        launchAtLogin = status == .enabled || status == .requiresApproval
+        loginNeedsApproval = status == .requiresApproval
         captureAllowed = WallpaperTransition.hasCapturePermission
     }
 
     private func setLaunchAtLogin(_ enabled: Bool) {
+        loginError = nil
         do {
             if enabled { try SMAppService.mainApp.register() }
             else { try SMAppService.mainApp.unregister() }
-        } catch { self.error = error.localizedDescription }
+        } catch {
+            let message = error.localizedDescription
+            loginError = message
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                if loginError == message { loginError = nil }
+            }
+        }
         refreshAccess()
+    }
+}
+
+/// A status dot and title for ordinary (non-ambient) surfaces.
+private struct StatusDot: View {
+    let title: String
+    let tone: SunpaperStatusTone
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle().fill(tone == .following ? SunpaperColor.accent : tone == .paused ? Color.secondary : tone.color)
+                .frame(width: 7, height: 7)
+            Text(title).font(.caption).foregroundStyle(.secondary)
+        }
     }
 }
 

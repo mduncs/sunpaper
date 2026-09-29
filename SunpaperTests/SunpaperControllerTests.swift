@@ -46,7 +46,7 @@ final class SunpaperControllerTests: XCTestCase {
         XCTAssertEqual(envelope.updatedAt, Self.date(hour: 12))
         XCTAssertEqual(envelope.wallpaperConfig, controller.config)
         XCTAssertEqual(WallpaperConfig.decodeCompatible(from: data), controller.config)
-        XCTAssertFalse(envelope.wallpaperConfig.enableSolarTracking)
+        XCTAssertFalse(envelope.wallpaperConfig.isFollowingSchedule)
         XCTAssertEqual(envelope.wallpaperConfig.locationName, original.locationName)
         XCTAssertEqual(envelope.wallpaperConfig.slots, original.slots)
         XCTAssertEqual(envelope.wallpaperConfig.slots(for: displays[0].uuid), original.slots(for: displays[0].uuid))
@@ -65,6 +65,86 @@ final class SunpaperControllerTests: XCTestCase {
         XCTAssertEqual(controller.config, explicit)
     }
 
+    func testUnreadableSettingsAreBackedUpBeforeAnEdit() throws {
+        let suite = "SunpaperControllerTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let unreadable = Data("not JSON".utf8)
+        defaults.set(unreadable, forKey: WallpaperConfig.userDefaultsKey)
+
+        let controller = makeController(defaults: defaults)
+        XCTAssertEqual(controller.config, .default)
+        XCTAssertEqual(defaults.data(forKey: WallpaperConfig.unreadableBackupKey), unreadable)
+        XCTAssertEqual(defaults.data(forKey: WallpaperConfig.userDefaultsKey), unreadable)
+        XCTAssertEqual(controller.message, "Your settings couldn’t be read. Defaults are in use, and the old data was kept.")
+
+        controller.setSmoothWallpaperChanges(false)
+        XCTAssertEqual(defaults.data(forKey: WallpaperConfig.unreadableBackupKey), unreadable)
+        XCTAssertNotEqual(defaults.data(forKey: WallpaperConfig.userDefaultsKey), unreadable)
+
+        let secondUnreadable = Data("also not JSON".utf8)
+        defaults.set(secondUnreadable, forKey: WallpaperConfig.userDefaultsKey)
+        _ = makeController(defaults: defaults)
+        XCTAssertEqual(defaults.data(forKey: WallpaperConfig.unreadableBackupKey), unreadable)
+    }
+
+    func testNewerStoredSchemaIsNeverOverwrittenByEdits() throws {
+        let suite = "SunpaperControllerTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let expected = sampleConfig()
+        let future = try JSONEncoder().encode(expected.persistenceEnvelope(
+            schemaVersion: WallpaperConfig.currentSchemaVersion + 1))
+        defaults.set(future, forKey: WallpaperConfig.userDefaultsKey)
+
+        let controller = makeController(defaults: defaults)
+        XCTAssertEqual(controller.config, expected)
+        controller.setSmoothWallpaperChanges(false)
+        XCTAssertFalse(controller.config.smoothWallpaperChanges)
+        XCTAssertEqual(defaults.data(forKey: WallpaperConfig.userDefaultsKey), future)
+        XCTAssertEqual(controller.message, "A newer version of Sunpaper saved these settings. Changes made here won’t be saved by this version.")
+    }
+
+    func testInvalidCoordinatesAreRejectedAndIgnoredWhenLoadedOrEdited() {
+        let invalidPairs: [(Double?, Double?)] = [
+            (nil, -18.0), (.nan, 18.0), (69.0, .infinity), (91.0, 18.0), (69.0, -181.0)
+        ]
+        for (latitude, longitude) in invalidPairs {
+            var config = WallpaperConfig.default
+            config.latitude = latitude
+            config.longitude = longitude
+            let controller = makeController(config: config)
+            XCTAssertNil(controller.polarCondition)
+            XCTAssertNil(controller.resolvedTime(for: .sunrise()))
+        }
+
+        let controller = makeController(config: sampleConfig())
+        let original = controller.config
+        controller.setLocation(name: "Invalid", latitude: .nan, longitude: 18)
+        XCTAssertEqual(controller.config, original)
+        XCTAssertEqual(controller.message, "Choose a valid location to use solar times.")
+        controller.setLocation(name: "Invalid", latitude: 91, longitude: 18)
+        XCTAssertEqual(controller.config, original)
+
+        controller.change("Invalid stored location") { config in
+            config.latitude = .infinity
+        }
+        XCTAssertNil(controller.polarCondition)
+        XCTAssertNil(controller.resolvedTime(for: .sunrise()))
+    }
+
+    func testPolarConditionUsesCurrentDate() {
+        var config = WallpaperConfig.default
+        config.locationName = "Tromsø"
+        config.latitude = 69.6492
+        config.longitude = 18.9553
+        let winter = Calendar.current.date(from: DateComponents(year: 2026, month: 12, day: 21))!
+        let summer = Calendar.current.date(from: DateComponents(year: 2026, month: 6, day: 21))!
+
+        XCTAssertEqual(makeController(config: config, now: winter).polarCondition, .polarNight)
+        XCTAssertEqual(makeController(config: config, now: summer).polarCondition, .polarDay)
+    }
+
     func testEditingSelectedDisplayDoesNotMutateGlobalOrOtherDisplayRules() {
         let original = sampleConfig()
         let service = ControllerWallpaperFake()
@@ -76,7 +156,7 @@ final class SunpaperControllerTests: XCTestCase {
         XCTAssertEqual(controller.slots, original.slots(for: displays[1].uuid) + [added])
         XCTAssertEqual(controller.config.slots, original.slots)
         XCTAssertEqual(controller.config.slots(for: displays[0].uuid), original.slots(for: displays[0].uuid))
-        XCTAssertFalse(controller.config.enableSolarTracking)
+        XCTAssertFalse(controller.config.isFollowingSchedule)
 
         var outOfScope = original.slots(for: displays[0].uuid)[0]
         outOfScope.name = "Must not change the other display"
@@ -118,7 +198,7 @@ final class SunpaperControllerTests: XCTestCase {
         XCTAssertEqual(controller.collectionName, "Tahoe")
         XCTAssertEqual(replaced.slots, original.slots)
         XCTAssertEqual(replaced.slots(for: displays[0].uuid), original.slots(for: displays[0].uuid))
-        XCTAssertFalse(replaced.enableSolarTracking)
+        XCTAssertFalse(replaced.isFollowingSchedule)
         XCTAssertTrue(controller.undoManager.canUndo)
 
         // Selection is UI state, not part of the undo transaction. Undo must
@@ -155,14 +235,14 @@ final class SunpaperControllerTests: XCTestCase {
         controller.undoManager.undo()
         await controller.scheduler.waitForPendingApplication()
         XCTAssertEqual(controller.slots, original.slots)
-        XCTAssertFalse(controller.config.enableSolarTracking)
+        XCTAssertFalse(controller.config.isFollowingSchedule)
         XCTAssertEqual(controller.scheduler.playbackMode, .paused)
         XCTAssertEqual(service.applications.count, applicationsBeforeUndo)
 
         controller.undoManager.redo()
         await controller.scheduler.waitForPendingApplication()
         XCTAssertEqual(controller.slots, collectionSlots)
-        XCTAssertFalse(controller.config.enableSolarTracking)
+        XCTAssertFalse(controller.config.isFollowingSchedule)
         XCTAssertEqual(controller.scheduler.playbackMode, .paused)
         XCTAssertEqual(service.applications.count, applicationsBeforeUndo)
     }
@@ -184,13 +264,13 @@ final class SunpaperControllerTests: XCTestCase {
         XCTAssertEqual(controller.slots, original.slots)
         controller.setDisplayMode(.perDisplay)
         XCTAssertEqual(controller.config.perDisplayConfigs, savedPerDisplay)
-        XCTAssertFalse(controller.config.enableSolarTracking)
+        XCTAssertFalse(controller.config.isFollowingSchedule)
     }
 
     func testFixedTimeResolutionAndOvernightScheduleWorkWithoutLocation() {
         let morning = slot("Morning", hour: 8)
         let evening = slot("Evening", hour: 18)
-        let config = WallpaperConfig(slots: [morning, evening], enableSolarTracking: false)
+        let config = WallpaperConfig(slots: [morning, evening], isFollowingSchedule: false)
         let controller = makeController(config: config, now: Self.date(hour: 6))
         XCTAssertEqual(controller.resolvedTime(for: morning.trigger), Self.date(hour: 8))
         XCTAssertNil(controller.resolvedTime(for: .sunrise()))
@@ -215,14 +295,14 @@ final class SunpaperControllerTests: XCTestCase {
 
     func testPausedEditsRemainPausedAndNeverApplyWallpaper() async {
         let service = ControllerWallpaperFake()
-        let controller = makeController(config: WallpaperConfig(slots: [slot("Initial", hour: 8)], enableSolarTracking: false), service: service)
+        let controller = makeController(config: WallpaperConfig(slots: [slot("Initial", hour: 8)], isFollowingSchedule: false), service: service)
         controller.start()
         defer { controller.stop() }
         controller.editSlots("Rename change") { $0[0].name = "Renamed while paused" }
         controller.useCollection(BuiltInWallpapers.sequoia)
         controller.setLocation(name: "Chicago", latitude: 41.8781, longitude: -87.6298)
         await controller.scheduler.waitForPendingApplication()
-        XCTAssertFalse(controller.config.enableSolarTracking)
+        XCTAssertFalse(controller.config.isFollowingSchedule)
         XCTAssertEqual(controller.scheduler.playbackMode, .paused)
         XCTAssertEqual(controller.collectionName, "Sequoia")
         XCTAssertNotNil(controller.scheduler.currentSlot)
@@ -243,7 +323,7 @@ final class SunpaperControllerTests: XCTestCase {
         await controller.scheduler.waitForPendingApplication()
         XCTAssertEqual(controller.scheduler.playbackMode, .paused)
         XCTAssertEqual(controller.scheduler.currentSlot?.name, "New")
-        XCTAssertFalse(controller.config.enableSolarTracking)
+        XCTAssertFalse(controller.config.isFollowingSchedule)
         XCTAssertTrue(service.applications.isEmpty)
     }
 
@@ -313,7 +393,7 @@ final class SunpaperControllerTests: XCTestCase {
         XCTAssertEqual(controller.config.perDisplayConfigs, perDisplayBeforeEdit)
         XCTAssertEqual(controller.slots, original.perDisplayConfigs[1].slots)
         XCTAssertEqual(controller.scope, displays[1].uuid)
-        XCTAssertFalse(controller.config.enableSolarTracking)
+        XCTAssertFalse(controller.config.isFollowingSchedule)
     }
 
     func testCapturedManualApplyScopeIsIndependentOfCurrentSelectionAndMode() async {
@@ -347,7 +427,7 @@ final class SunpaperControllerTests: XCTestCase {
 
     private func sampleConfig() -> WallpaperConfig {
         WallpaperConfig(
-            slots: [slot("Global", hour: 7)], enableSolarTracking: false,
+            slots: [slot("Global", hour: 7)], isFollowingSchedule: false,
             locationName: "Chicago", latitude: 41.8781, longitude: -87.6298,
             displayMode: .perDisplay,
             perDisplayConfigs: [

@@ -220,6 +220,15 @@ final class WallpaperTransition: ObservableObject {
 
     static var hasCapturePermission: Bool { CGPreflightScreenCaptureAccess() }
 
+    static func relaunchApp() {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { application, error in
+            guard application != nil, error == nil else { return }
+            Task { @MainActor in NSApp.terminate(nil) }
+        }
+    }
+
     /// Called only by the explicit Settings button, never by the scheduler.
     static func requestCapturePermission() {
         if !CGRequestScreenCaptureAccess(),

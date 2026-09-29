@@ -145,7 +145,8 @@ does not launch Sunpaper, change wallpaper, or take over the user's desktop.
 Appearance and downloaded badges reflect local macOS/catalog state.
 
 The default output is `screenshots/`: dark/light schedule and Settings views,
-three menu states, the wallpaper/timing/location editors, and smoothing off.
+three menu states, the wallpaper/timing/add-change/location editors, and
+smoothing off.
 Review these current variants together when changing shared UI. Offscreen
 renders verify layout, not foreground interactions or live transition quality.
 

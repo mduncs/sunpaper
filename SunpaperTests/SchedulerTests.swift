@@ -42,7 +42,7 @@ final class SchedulerTests: XCTestCase {
         )
 
         var newConfig = config
-        newConfig.enableSolarTracking = false
+        newConfig.isFollowingSchedule = false
 
         // Should not crash
         scheduler.updateConfig(newConfig)
@@ -121,7 +121,7 @@ final class SchedulerTests: XCTestCase {
 
     func testSchedulerWithDisabledSolarTracking() {
         var config = WallpaperConfig.default
-        config.enableSolarTracking = false
+        config.isFollowingSchedule = false
 
         let scheduler = SlotScheduler(
             config: config,
@@ -177,7 +177,7 @@ final class SchedulerTests: XCTestCase {
         XCTAssertEqual(scheduler.currentSlot?.id, slot.id)
 
         var disabledConfig = WallpaperConfig(slots: [slot])
-        disabledConfig.enableSolarTracking = false
+        disabledConfig.isFollowingSchedule = false
         scheduler.updateConfig(disabledConfig)
 
         XCTAssertEqual(scheduler.todaySchedule.map(\.slot.id), [slot.id])
@@ -220,7 +220,7 @@ final class SchedulerTests: XCTestCase {
         // Sequential config updates should not crash
         for i in 0..<10 {
             var newConfig = config
-            newConfig.enableSolarTracking = i % 2 == 0
+            newConfig.isFollowingSchedule = i % 2 == 0
             scheduler.updateConfig(newConfig)
         }
 
@@ -337,7 +337,7 @@ final class SchedulerTests: XCTestCase {
         let service = ControlledWallpaperService()
         let wake = TestWakeObserver()
         let timers = TestTimerScheduler()
-        let scheduler = runtime(config: WallpaperConfig(slots: [slot], enableSolarTracking: false), service: service, timers: timers, wake: wake)
+        let scheduler = runtime(config: WallpaperConfig(slots: [slot], isFollowingSchedule: false), service: service, timers: timers, wake: wake)
         scheduler.start()
         await scheduler.waitForPendingApplication()
         XCTAssertEqual(scheduler.playbackMode, .paused)
@@ -531,7 +531,7 @@ final class SchedulerTests: XCTestCase {
         scheduler.start()
         let waiting = Task { await scheduler.waitForPendingApplication() }
         await fulfillment(of: [started], timeout: 2)
-        config.enableSolarTracking = false
+        config.isFollowingSchedule = false
         scheduler.updateConfig(config)
         XCTAssertEqual(scheduler.playbackMode, .paused)
         XCTAssertTrue(scheduler.isApplying) // Mandatory recovery is still active.
@@ -550,7 +550,7 @@ final class SchedulerTests: XCTestCase {
             DisplayManager.Display(uuid: "first", name: "First", isPrimary: true),
             DisplayManager.Display(uuid: "second", name: "Second", isPrimary: false)
         ]
-        var config = WallpaperConfig(slots: [], enableSolarTracking: false, displayMode: .perDisplay, perDisplayConfigs: [
+        var config = WallpaperConfig(slots: [], isFollowingSchedule: false, displayMode: .perDisplay, perDisplayConfigs: [
             DisplayConfig(displayUUID: "first", slots: [TimeSlot(name: "Image", trigger: .fixed(hour: 8, minute: 0), source: .custom(path: "/fake/image.jpg"))]),
             DisplayConfig(displayUUID: "second", slots: [runtimeSlot("new second", hour: 8)])
         ])
@@ -559,7 +559,7 @@ final class SchedulerTests: XCTestCase {
         await scheduler.applyWallpaper(source: .builtIn(assetID: "old first"), displayUUID: "first")?.value
         await scheduler.applyWallpaper(source: .builtIn(assetID: "old second"), displayUUID: "second")?.value
         service.onApply = { _ in throw WallpaperError.agentRestartFailed }
-        config.enableSolarTracking = true
+        config.isFollowingSchedule = true
         scheduler.updateConfig(config)
         await scheduler.waitForPendingApplication()
         XCTAssertEqual(service.customApplications.map(\.path), ["/fake/image.jpg"])
@@ -712,7 +712,7 @@ final class SchedulerTests: XCTestCase {
             DisplayManager.Display(uuid: "second", name: "Second", isPrimary: false)
         ]
         let image = WallpaperSource.custom(path: "/fake/new-image.jpg")
-        var config = WallpaperConfig(slots: [TimeSlot(name: "Custom image", trigger: .fixed(hour: 8, minute: 0), source: image)], enableSolarTracking: false)
+        var config = WallpaperConfig(slots: [TimeSlot(name: "Custom image", trigger: .fixed(hour: 8, minute: 0), source: image)], isFollowingSchedule: false)
         let service = ControlledWallpaperService()
         let scheduler = runtime(config: config, service: service, displays: displays)
         scheduler.start()
@@ -722,7 +722,7 @@ final class SchedulerTests: XCTestCase {
             if displayUUID == "second" { throw WallpaperError.agentRestartFailed }
         }
         if scheduled {
-            config.enableSolarTracking = true
+            config.isFollowingSchedule = true
             scheduler.updateConfig(config)
             await scheduler.waitForPendingApplication()
         } else {
@@ -746,6 +746,41 @@ final class SchedulerTests: XCTestCase {
         await scheduler.waitForPendingApplication()
         XCTAssertEqual(service.applied, ["scheduled"])
         XCTAssertEqual(service.appliedSmoothing, [true])
+        XCTAssertFalse(scheduler.smoothingUnavailableBecauseOfPermission)
+        scheduler.stop()
+    }
+
+    func testMissingCapturePermissionFallsBackAndConfirmsScheduledWallpaper() async {
+        let service = ControlledWallpaperService()
+        service.onApplyWithSmoothing = { _, smoothChanges in
+            if smoothChanges { throw WallpaperTransitionError.capturePermission }
+        }
+        let config = WallpaperConfig(slots: [runtimeSlot("scheduled", hour: 8)])
+        let scheduler = runtime(config: config, service: service, hasCapturePermission: { false })
+        scheduler.start()
+        await scheduler.waitForPendingApplication()
+        XCTAssertEqual(service.applied, ["scheduled"])
+        XCTAssertEqual(service.appliedSmoothing, [false])
+        XCTAssertEqual(scheduler.confirmedSource, .builtIn(assetID: "scheduled"))
+        XCTAssertNil(scheduler.lastError)
+        XCTAssertTrue(scheduler.smoothingUnavailableBecauseOfPermission)
+        scheduler.stop()
+    }
+
+    func testSmoothingPermissionFlagClearsWhenPermissionReturns() async {
+        let service = ControlledWallpaperService()
+        var hasPermission = false
+        let config = WallpaperConfig(slots: [runtimeSlot("scheduled", hour: 8)])
+        let scheduler = runtime(config: config, service: service, hasCapturePermission: { hasPermission })
+        scheduler.start()
+        await scheduler.waitForPendingApplication()
+        XCTAssertTrue(scheduler.smoothingUnavailableBecauseOfPermission)
+
+        hasPermission = true
+        scheduler.forceUpdate()
+        await scheduler.waitForPendingApplication()
+        XCTAssertEqual(service.appliedSmoothing, [false, true])
+        XCTAssertFalse(scheduler.smoothingUnavailableBecauseOfPermission)
         scheduler.stop()
     }
 
@@ -815,7 +850,7 @@ final class SchedulerTests: XCTestCase {
 
     func testSmoothingToggleWhilePausedKeepsPauseAndAffectsNextManualChoice() async {
         let service = ControlledWallpaperService()
-        var config = WallpaperConfig(slots: [runtimeSlot("scheduled", hour: 8)], enableSolarTracking: false)
+        var config = WallpaperConfig(slots: [runtimeSlot("scheduled", hour: 8)], isFollowingSchedule: false)
         let scheduler = runtime(config: config, service: service)
         scheduler.start()
         config.smoothWallpaperChanges = false
@@ -913,7 +948,8 @@ final class SchedulerTests: XCTestCase {
         clock: TestClock? = nil,
         timers: TestTimerScheduler = TestTimerScheduler(),
         wake: TestWakeObserver = TestWakeObserver(),
-        displays: [DisplayManager.Display] = []
+        displays: [DisplayManager.Display] = [],
+        hasCapturePermission: @escaping @MainActor () -> Bool = { true }
     ) -> SlotScheduler {
         let clock = clock ?? TestClock(date: Self.localDate(hour: 12))
         var dependencies = testDependencies()
@@ -923,6 +959,7 @@ final class SchedulerTests: XCTestCase {
         dependencies.wakeObserver = wake
         dependencies.displayProvider = TestDisplayProvider(displays: displays)
         dependencies.aerialCatalog = DownloadableTestCatalog()
+        dependencies.hasCapturePermission = hasCapturePermission
         return SlotScheduler(config: config, locationProvider: { nil }, dependencies: dependencies)
     }
 
@@ -949,7 +986,8 @@ final class SchedulerTests: XCTestCase {
             wakeObserver: TestWakeObserver(),
             wallpaperService: TestWallpaperService(),
             displayProvider: TestDisplayProvider(),
-            aerialCatalog: TestAerialCatalogResolver()
+            aerialCatalog: TestAerialCatalogResolver(),
+            hasCapturePermission: { true }
         )
     }
 

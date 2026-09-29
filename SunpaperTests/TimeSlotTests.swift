@@ -236,13 +236,17 @@ final class TimeSlotTests: XCTestCase {
     }
 
     func testWallpaperConfigCodable() throws {
-        let config = WallpaperConfig.default
+        var config = WallpaperConfig.default
+        config.isFollowingSchedule = false
 
         let encoded = try JSONEncoder().encode(config)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertEqual(json["enableSolarTracking"] as? Bool, false)
+        XCTAssertNil(json["isFollowingSchedule"])
         let decoded = try JSONDecoder().decode(WallpaperConfig.self, from: encoded)
 
         XCTAssertEqual(decoded.slots.count, config.slots.count)
-        XCTAssertEqual(decoded.enableSolarTracking, config.enableSolarTracking)
+        XCTAssertEqual(decoded.isFollowingSchedule, config.isFollowingSchedule)
     }
 
     func testLegacyPreferencesKeepSmoothingEnabledAndExplicitOptOutRoundTrips() throws {

@@ -30,6 +30,7 @@
 		B1000008 /* WallpaperFrameSignatures.json in Resources */ = {isa = PBXBuildFile; fileRef = B2000008; };
 		A1000016 /* SunpaperController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000016; };
 		A1000017 /* ScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000017; };
+		A1000040 /* TimingControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000040; };
 		B1000009 /* SunpaperControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000009; };
 /* End PBXBuildFile section */
 
@@ -70,6 +71,7 @@
 		B2000008 /* WallpaperFrameSignatures.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = Fixtures/WallpaperFrameSignatures.json; sourceTree = "<group>"; };
 		A2000016 /* SunpaperController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SunpaperController.swift; sourceTree = "<group>"; };
 		A2000017 /* ScheduleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleView.swift; sourceTree = "<group>"; };
+		A2000040 /* TimingControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimingControl.swift; sourceTree = "<group>"; };
 		B2000009 /* SunpaperControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SunpaperControllerTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -126,6 +128,7 @@
 			isa = PBXGroup;
 			children = (
 				A2000017 /* ScheduleView.swift */,
+				A2000040 /* TimingControl.swift */,
 				A2000002 /* MenuBarView.swift */,
 				A2000003 /* SettingsView.swift */,
 				A2000012 /* WallpaperGridPicker.swift */,
@@ -273,6 +276,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A1000017 /* ScheduleView.swift in Sources */,
+				A1000040 /* TimingControl.swift in Sources */,
 				A1000016 /* SunpaperController.swift in Sources */,
 				A1000001 /* SunpaperApp.swift in Sources */,
 				A1000002 /* MenuBarView.swift in Sources */,

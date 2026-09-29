@@ -229,9 +229,10 @@ enum DisplayMode: String, Codable, Equatable {
 struct WallpaperConfig: Codable, Equatable {
     static let currentSchemaVersion = 1
     static let userDefaultsKey = "wallpaperConfig"
+    static let unreadableBackupKey = "wallpaperConfig.unreadableBackup"
 
     var slots: [TimeSlot]
-    var enableSolarTracking: Bool
+    var isFollowingSchedule: Bool
     var locationName: String?
     var latitude: Double?
     var longitude: Double?
@@ -241,7 +242,7 @@ struct WallpaperConfig: Codable, Equatable {
 
     init(
         slots: [TimeSlot] = [],
-        enableSolarTracking: Bool = true,
+        isFollowingSchedule: Bool = true,
         locationName: String? = nil,
         latitude: Double? = nil,
         longitude: Double? = nil,
@@ -250,7 +251,7 @@ struct WallpaperConfig: Codable, Equatable {
         smoothWallpaperChanges: Bool = true
     ) {
         self.slots = slots
-        self.enableSolarTracking = enableSolarTracking
+        self.isFollowingSchedule = isFollowingSchedule
         self.locationName = locationName
         self.latitude = latitude
         self.longitude = longitude
@@ -261,7 +262,7 @@ struct WallpaperConfig: Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case slots
-        case enableSolarTracking
+        case isFollowingSchedule = "enableSolarTracking"
         case locationName
         case latitude
         case longitude
@@ -285,7 +286,7 @@ struct WallpaperConfig: Codable, Equatable {
         let defaultConfig = Self.default
 
         slots = try container.decodeIfPresent([TimeSlot].self, forKey: .slots) ?? defaultConfig.slots
-        enableSolarTracking = try container.decodeIfPresent(Bool.self, forKey: .enableSolarTracking) ?? defaultConfig.enableSolarTracking
+        isFollowingSchedule = try container.decodeIfPresent(Bool.self, forKey: .isFollowingSchedule) ?? defaultConfig.isFollowingSchedule
         locationName = try container.decodeIfPresent(String.self, forKey: .locationName)
         latitude = try container.decodeIfPresent(Double.self, forKey: .latitude)
         longitude = try container.decodeIfPresent(Double.self, forKey: .longitude)
@@ -297,7 +298,7 @@ struct WallpaperConfig: Codable, Equatable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(slots, forKey: .slots)
-        try container.encode(enableSolarTracking, forKey: .enableSolarTracking)
+        try container.encode(isFollowingSchedule, forKey: .isFollowingSchedule)
         try container.encodeIfPresent(locationName, forKey: .locationName)
         try container.encodeIfPresent(latitude, forKey: .latitude)
         try container.encodeIfPresent(longitude, forKey: .longitude)
@@ -321,6 +322,11 @@ struct WallpaperConfig: Codable, Equatable {
     static func decodeCompatibleOrDefault(from data: Data?, decoder: JSONDecoder = JSONDecoder()) -> WallpaperConfig {
         guard let data else { return makeDefault() }
         return decodeCompatible(from: data, decoder: decoder) ?? makeDefault()
+    }
+
+    static func storedSchemaVersion(from data: Data) -> Int? {
+        struct Schema: Decodable { let schemaVersion: Int }
+        return (try? JSONDecoder().decode(Schema.self, from: data))?.schemaVersion
     }
 
     static func migratedConfig(from envelope: AppPreferencesEnvelope) -> WallpaperConfig {
@@ -416,7 +422,7 @@ struct WallpaperConfig: Codable, Equatable {
 
     static let `default` = WallpaperConfig(
         slots: BuiltInWallpapers.tahoe.defaultSlots,
-        enableSolarTracking: true
+        isFollowingSchedule: true
     )
 }
 
