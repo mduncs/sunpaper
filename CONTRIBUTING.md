@@ -42,7 +42,11 @@ are intentional variants, not archived versions.
 
 One controller owns shared runtime state and persisted preferences. Construction
 is inert; app startup explicitly starts scheduling. Preserve compatibility with
-older saved configuration through the versioned-envelope decoder.
+older saved configuration through the versioned-envelope decoder. Unreadable
+data is copied once to `wallpaperConfig.unreadableBackup` before defaults take
+over, and data from a newer schema is never overwritten. Keep persisted keys
+stable across renames (`isFollowingSchedule` is still saved as
+`enableSolarTracking`). Coordinates are validated on load, edit, and choose.
 
 The expected schedule and the last successfully applied wallpaper are separate
 state. A due slot does not prove an application succeeded. Confirm each display
@@ -80,16 +84,18 @@ Captures stay in memory and exclude app windows, cursor, audio, and recordings.
 
 ### Permission and serialization
 
-Smoothing defaults to on, including for older preferences. Missing screen
-capture access stops before mutation; background scheduling never prompts or
-silently falls back. Settings provides an explicit permission request and an
-opt-out. With smoothing off, changes still serialize, validate video readability,
+Smoothing defaults to on, including for older preferences. Without screen
+capture access, a smoothed change falls back to the unsmoothed path instead of
+failing, and the scheduler publishes `smoothingUnavailableBecauseOfPermission`
+so Settings can say so. Background scheduling never prompts. Settings provides
+an explicit permission request, **Quit & Reopen** (macOS caches the permission
+check per process), and an opt-out. With smoothing off, changes still serialize, validate video readability,
 and roll back on failure, but use no capture, overlays, or visual polling. A
 gray flash may be visible.
 
 Snapshot the smoothing preference for each request. Changing it does not replay
 a successful change, alter an in-flight request, or extend an override; it can
-retry a scheduled change blocked by missing capture access. A shared gate
+retry a scheduled change that failed. A shared gate
 serializes aerial changes across displays. Cancellation must finish recovery
 before the next mutation. Static `NSWorkspace` changes are rejected while an
 aerial transition or recovery owns the desktop. Provider writes must succeed

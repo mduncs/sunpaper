@@ -14,7 +14,9 @@ times, or choose a wallpaper temporarily. Custom still images work too.
 ## Download
 
 Get the packaged app from **[GitHub Releases](https://github.com/mduncs/sunpaper/releases/latest)**,
-open the disk image, and drag Sunpaper to Applications.
+open the disk image, and drag Sunpaper to Applications. Keep it there:
+**Open Sunpaper at login** starts whichever copy you turned it on from, and
+Settings warns you when that copy isn't in Applications.
 
 The screenshots and features below describe the **current development source**.
 The published **v1.1.0** release uses the previous interface.
@@ -51,9 +53,9 @@ for the app session; reopening uses your saved following/paused setting.
 
 ![Wallpaper picker with an explicit confirmation button](screenshots/wallpaper-picker.png)
 
-| Timing editor | Location chooser |
-| --- | --- |
-| <img src="screenshots/timing-editor.png" width="440" alt="Timing editor with a draft schedule rule"> | <img src="screenshots/location-picker.png" width="440" alt="Location chooser with search and explicit current-location action"> |
+| Timing editor | Add a change | Location chooser |
+| --- | --- | --- |
+| <img src="screenshots/timing-editor.png" width="290" alt="Timing editor with a draft schedule rule"> | <img src="screenshots/add-change.png" width="290" alt="Add a change sheet with wallpaper and timing choices"> | <img src="screenshots/location-picker.png" width="290" alt="Location chooser with search and explicit current-location action"> |
 
 </details>
 
@@ -77,8 +79,11 @@ switch modes.
 
 **Settings → Smooth wallpaper changes** keeps the previous wallpaper visible
 while the next aerial loads. It is on by default and needs macOS screen capture
-access, requested through **Allow screen capture…**. Only the wallpaper is
-captured—not app windows or audio—and those images stay in memory.
+access, requested only when you click **Allow screen capture…**. Only the
+wallpaper is captured—not app windows or audio—and those images stay in memory.
+Until access is allowed, changes still happen on schedule, just instantly.
+macOS only reports new access after a relaunch, so Settings offers
+**Quit & Reopen** once you've granted it.
 
 You can turn smoothing off. Scheduling and manual changes then work without
 screen capture access, although macOS may briefly show gray during an aerial
@@ -101,11 +106,16 @@ an Apple aerial, and reopen Sunpaper. Missing selected aerials are downloaded
 when needed. A row's **Download again** fetches a fresh copy without discarding
 the working file until replacement succeeds.
 
-If a change fails, use **Retry** after addressing the reported problem. With
-smoothing on, missing screen capture access prevents the change; allow access
-in Settings or turn smoothing off. If macOS asks you to quit and reopen after
-granting access, do that before retrying. Use **Restore desktop** if it appears
-after a failed recovery.
+If a change fails, use **Retry** after addressing the reported problem. Missing
+screen capture access doesn't block changes; they happen without smoothing
+until you allow access and choose **Quit & Reopen** in Settings. Use
+**Restore desktop** if it appears after a failed recovery.
+
+If your saved settings can't be read, Sunpaper starts from defaults and keeps
+the old data aside instead of overwriting it. Settings saved by a newer version
+of Sunpaper are never overwritten by an older one. In places where the sun
+doesn't rise or set that day, the location note says so and solar changes use
+estimated times.
 
 ## Development
 
