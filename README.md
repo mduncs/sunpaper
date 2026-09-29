@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="screenshots/sunpaper-lockup.png" width="420" alt="Sunpaper">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="screenshots/sunpaper-lockup-dark.png">
+    <img src="screenshots/sunpaper-lockup.png" width="420" alt="Sunpaper">
+  </picture>
 </p>
 
 # Sunpaper

@@ -19,12 +19,10 @@ struct SettingsView: View {
         Form {
             Section {
                 HStack(spacing: 14) {
-                    Image(systemName: "sun.horizon.fill")
-                        .font(.system(size: 22, weight: .semibold))
-                        .foregroundStyle(.white, SunpaperSky.gold)
-                        .frame(width: 44, height: 44)
-                        .background(LinearGradient(colors: [SunpaperSky.glow, SunpaperSky.twilight, SunpaperSky.night], startPoint: .top, endPoint: .bottom),
-                                    in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    Image(nsImage: NSApp.applicationIconImage)
+                        .resizable()
+                        .frame(width: 56, height: 56)
+                        .padding(-6)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Sunpaper").font(.title3.weight(.semibold))

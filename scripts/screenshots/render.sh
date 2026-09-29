@@ -15,4 +15,4 @@ xcrun swiftc -parse-as-library -swift-version 5 \
     "$repo_root"/Sunpaper/Views/*.swift \
     "$repo_root/scripts/screenshots/Render.swift" \
     -o "$build_dir/render"
-"$build_dir/render" "$output_dir"
+"$build_dir/render" "$output_dir" "$repo_root"

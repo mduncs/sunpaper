@@ -32,9 +32,13 @@ private struct RenderWallpaper: SlotSchedulerWallpaperServicing {
 @main struct Render {
     @MainActor static func main() async throws {
         SettingsView.appBundleURL = URL(fileURLWithPath: "/Applications/Sunpaper.app")
+        // The renderer isn't a bundle, so borrow the app icon Settings shows.
+        if CommandLine.arguments.count > 2 {
+            NSApplication.shared.applicationIconImage = NSImage(contentsOfFile: CommandLine.arguments[2] + "/Sunpaper/Assets.xcassets/AppIcon.appiconset/icon_256x256.png")
+        }
         NSApplication.shared.setActivationPolicy(.prohibited)
-        guard CommandLine.arguments.count == 2 else {
-            throw NSError(domain: "SunpaperScreenshots", code: 1, userInfo: [NSLocalizedDescriptionKey: "Usage: render OUTPUT_DIRECTORY"])
+        guard (2...3).contains(CommandLine.arguments.count) else {
+            throw NSError(domain: "SunpaperScreenshots", code: 1, userInfo: [NSLocalizedDescriptionKey: "Usage: render OUTPUT_DIRECTORY [REPO_ROOT]"])
         }
         let directory = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
