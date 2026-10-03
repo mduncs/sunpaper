@@ -938,6 +938,148 @@ final class SchedulerTests: XCTestCase {
         scheduler.stop()
     }
 
+    func testSolarOffsetsAcrossMidnightUseChronologicalOccurrences() async {
+        let day = Calendar.current.startOfDay(for: Self.localDate(hour: 12))
+        let clock = TestClock(date: day.addingTimeInterval(30 * 60))
+        let service = ControlledWallpaperService()
+        let fixed = runtimeSlot("midnight", hour: 0)
+        let sunrise = TimeSlot(name: "Before sunrise", trigger: .hoursBeforeSunrise(2), source: .builtIn(assetID: "early"))
+        let sunset = TimeSlot(name: "After sunset", trigger: .hoursAfterSunset(3), source: .builtIn(assetID: "late"))
+        let config = WallpaperConfig(slots: [fixed, sunrise, sunset])
+        var dependencies = testDependencies()
+        dependencies.now = { clock.date }
+        dependencies.wallpaperService = service
+        dependencies.calculateSunTimes = { _, date in
+            let start = Calendar.current.startOfDay(for: date)
+            return SunCalculator.SunTimes(
+                sunrise: start.addingTimeInterval(4 * 3600), sunset: start.addingTimeInterval(22 * 3600),
+                civilDawn: nil, civilDusk: nil, solarNoon: nil, date: date, polarCondition: .normal)
+        }
+        let scheduler = SlotScheduler(config: config, locationProvider: { self.chicagoLocation }, dependencies: dependencies)
+        scheduler.start()
+        await scheduler.waitForPendingApplication()
+        XCTAssertEqual(scheduler.currentSlot?.id, fixed.id)
+        XCTAssertEqual(scheduler.nextTransition?.date, day.addingTimeInterval(3600))
+        await scheduler.applyWallpaper(source: .builtIn(assetID: "manual"))?.value
+        XCTAssertEqual(scheduler.playbackMode, .temporary(until: day.addingTimeInterval(3600)))
+        scheduler.resumeSchedule()
+        await scheduler.waitForPendingApplication()
+        clock.date = day.addingTimeInterval(90 * 60)
+        scheduler.forceUpdate()
+        await scheduler.waitForPendingApplication()
+        // Yesterday's sunset + 3h has occurred more recently than today's midnight.
+        XCTAssertEqual(scheduler.currentSlot?.id, sunset.id)
+        XCTAssertEqual(scheduler.confirmedSource, sunset.source)
+        scheduler.stop()
+    }
+
+    func testNegativeSolarOffsetFromTomorrowCanBeCurrentTonight() async {
+        let clock = TestClock(date: Self.localDate(hour: 23))
+        let service = ControlledWallpaperService()
+        let fixed = runtimeSlot("evening", hour: 20)
+        let solar = TimeSlot(name: "Before sunrise", trigger: .hoursBeforeSunrise(6), source: .builtIn(assetID: "early"))
+        var dependencies = testDependencies()
+        dependencies.now = { clock.date }
+        dependencies.wallpaperService = service
+        dependencies.calculateSunTimes = { _, date in
+            let start = Calendar.current.startOfDay(for: date)
+            return SunCalculator.SunTimes(
+                sunrise: start.addingTimeInterval(4 * 3600), sunset: start.addingTimeInterval(20 * 3600),
+                civilDawn: nil, civilDusk: nil, solarNoon: nil, date: date, polarCondition: .normal)
+        }
+        let scheduler = SlotScheduler(config: WallpaperConfig(slots: [fixed, solar]), locationProvider: { self.chicagoLocation }, dependencies: dependencies)
+        scheduler.start()
+        await scheduler.waitForPendingApplication()
+        XCTAssertEqual(scheduler.currentSlot?.id, solar.id)
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: clock.date)!
+        XCTAssertEqual(scheduler.nextTransition?.date, Calendar.current.date(bySettingHour: 20, minute: 0, second: 0, of: tomorrow))
+        XCTAssertGreaterThan(scheduler.nextTransition!.date, clock.date)
+        scheduler.stop()
+    }
+
+    func testDisplayForceUpdateSupersedesAnInflightGlobalApplication() async {
+        let first = DisplayManager.Display(uuid: "first", name: "First", isPrimary: true)
+        let second = DisplayManager.Display(uuid: "second", name: "Second", isPrimary: false)
+        let displays = MutableDisplayProvider(displays: [first])
+        let service = ControlledWallpaperService()
+        let started = expectation(description: "original display application started")
+        var finish: CheckedContinuation<Void, Never>?
+        service.onApply = { _ in
+            if service.applied.count == 1 {
+                started.fulfill()
+                await withCheckedContinuation { finish = $0 }
+            }
+        }
+        var dependencies = testDependencies()
+        dependencies.wallpaperService = service
+        dependencies.displayProvider = displays
+        let scheduler = SlotScheduler(config: WallpaperConfig(slots: [runtimeSlot("scheduled", hour: 0)]), locationProvider: { nil }, dependencies: dependencies)
+        scheduler.start()
+        let original = Task { await scheduler.waitForPendingApplication() }
+        await fulfillment(of: [started], timeout: 2)
+        displays.displays.append(second)
+        scheduler.forceUpdate()
+        finish?.resume()
+        await original.value
+        await scheduler.waitForPendingApplication()
+        XCTAssertEqual(service.applied, ["scheduled", "scheduled"])
+        XCTAssertEqual(scheduler.confirmedSourcesByDisplay[second.uuid], .builtIn(assetID: "scheduled"))
+        scheduler.stop()
+    }
+
+    func testDisplayForceUpdateDoesNotClaimAnUnconfirmedNewDisplaySucceeded() async {
+        let first = DisplayManager.Display(uuid: "first", name: "First", isPrimary: true)
+        let second = DisplayManager.Display(uuid: "second", name: "Second", isPrimary: false)
+        let displays = MutableDisplayProvider(displays: [first])
+        let service = ControlledWallpaperService()
+        var dependencies = testDependencies()
+        dependencies.wallpaperService = service
+        dependencies.displayProvider = displays
+        let scheduler = SlotScheduler(config: WallpaperConfig(slots: [runtimeSlot("scheduled", hour: 0)]), locationProvider: { nil }, dependencies: dependencies)
+        scheduler.start()
+        await scheduler.waitForPendingApplication()
+        XCTAssertEqual(scheduler.confirmedSource, .builtIn(assetID: "scheduled"))
+        displays.displays.append(second)
+        service.onApply = { _ in throw WallpaperError.agentRestartFailed }
+        scheduler.forceUpdate()
+        await scheduler.waitForPendingApplication()
+        XCTAssertNil(scheduler.confirmedSource)
+        XCTAssertEqual(scheduler.confirmedSourcesByDisplay[first.uuid], .builtIn(assetID: "scheduled"))
+        XCTAssertNil(scheduler.confirmedSourcesByDisplay[second.uuid])
+        scheduler.stop()
+    }
+
+    func testDisplayForceUpdatePreservesInflightManualOverrideAndItsOriginalDisplays() async {
+        let first = DisplayManager.Display(uuid: "first", name: "First", isPrimary: true)
+        let second = DisplayManager.Display(uuid: "second", name: "Second", isPrimary: false)
+        let displays = MutableDisplayProvider(displays: [first])
+        let service = ControlledWallpaperService()
+        let started = expectation(description: "manual application started")
+        var finish: CheckedContinuation<Void, Never>?
+        service.onApply = { _ in
+            started.fulfill()
+            await withCheckedContinuation { finish = $0 }
+        }
+        var dependencies = testDependencies()
+        dependencies.wallpaperService = service
+        dependencies.displayProvider = displays
+        let scheduler = SlotScheduler(config: WallpaperConfig(slots: []), locationProvider: { nil }, dependencies: dependencies)
+        scheduler.start()
+        let request = scheduler.applyWallpaper(source: .builtIn(assetID: "manual"), duration: .oneHour)
+        let mode = scheduler.playbackMode
+        await fulfillment(of: [started], timeout: 2)
+        displays.displays.append(second)
+        scheduler.forceUpdate()
+        finish?.resume()
+        await request?.value
+        XCTAssertEqual(scheduler.playbackMode, mode)
+        XCTAssertEqual(service.applied, ["manual"])
+        XCTAssertEqual(scheduler.confirmedSourcesByDisplay[first.uuid], .builtIn(assetID: "manual"))
+        XCTAssertNil(scheduler.confirmedSourcesByDisplay[second.uuid])
+        XCTAssertNil(scheduler.confirmedSource)
+        scheduler.stop()
+    }
+
     private func runtimeSlot(_ assetID: String, hour: Int) -> TimeSlot {
         TimeSlot(name: assetID, trigger: .fixed(hour: hour, minute: 0), source: .builtIn(assetID: assetID))
     }
@@ -1107,4 +1249,10 @@ private struct DownloadableTestCatalog: SlotSchedulerAerialCatalogResolving {
 private final class TestClock {
     var date: Date
     init(date: Date) { self.date = date }
+}
+
+private final class MutableDisplayProvider: SlotSchedulerDisplayProviding {
+    var displays: [DisplayManager.Display]
+    init(displays: [DisplayManager.Display]) { self.displays = displays }
+    func getDisplays() -> [DisplayManager.Display] { displays }
 }

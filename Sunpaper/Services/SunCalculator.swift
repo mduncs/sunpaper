@@ -45,9 +45,10 @@ class SunCalculator {
         // Solar noon in minutes from midnight UTC
         let solarNoonMinutes = 720 - timeOffset
 
-        // Get timezone offset in minutes
-        let tzOffset = Double(TimeZone.current.secondsFromGMT(for: date)) / 60
         let startOfDay = calendar.startOfDay(for: date)
+        // Elapsed minutes are added to midnight, so use midnight's offset even
+        // when a DST change occurs later on the requested day.
+        let tzOffset = Double(calendar.timeZone.secondsFromGMT(for: startOfDay)) / 60
 
         // Solar noon
         let solarNoon = startOfDay.addingTimeInterval((solarNoonMinutes + tzOffset) * 60)

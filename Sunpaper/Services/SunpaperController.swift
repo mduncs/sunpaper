@@ -168,7 +168,7 @@ final class SunpaperController: ObservableObject {
 
     var expectedSlot: TimeSlot? {
         let today = now()
-        let candidates = [-1, 0].flatMap { offset -> [(TimeSlot, Date)] in
+        let candidates = (-2...2).flatMap { offset -> [(TimeSlot, Date)] in
             guard let date = Calendar.current.date(byAdding: .day, value: offset, to: today) else { return [] }
             return slots.filter { $0.isEnabled && $0.source != .none }.compactMap { slot in
                 resolvedTime(for: slot.trigger, on: date).map { (slot, $0) }
@@ -179,7 +179,7 @@ final class SunpaperController: ObservableObject {
 
     var nextChange: (slot: TimeSlot, date: Date)? {
         let today = now()
-        let candidates = [0, 1].flatMap { offset -> [(TimeSlot, Date)] in
+        let candidates = (-2...2).flatMap { offset -> [(TimeSlot, Date)] in
             guard let date = Calendar.current.date(byAdding: .day, value: offset, to: today) else { return [] }
             return slots.filter { $0.isEnabled && $0.source != .none }.compactMap { slot in
                 resolvedTime(for: slot.trigger, on: date).map { (slot, $0) }

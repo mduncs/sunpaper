@@ -105,6 +105,35 @@ final class SunpaperControllerTests: XCTestCase {
         XCTAssertEqual(controller.message, "A newer version of Sunpaper saved these settings. Changes made here won’t be saved by this version.")
     }
 
+    func testMalformedVersionedEnvelopeIsBackedUpInsteadOfSilentlyDecodedAsDefaults() throws {
+        let suite = "SunpaperControllerTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let malformed = Data("{\"schemaVersion\":1,\"updatedAt\":\"broken\"}".utf8)
+        defaults.set(malformed, forKey: WallpaperConfig.userDefaultsKey)
+        let controller = makeController(defaults: defaults)
+        XCTAssertEqual(controller.config, .default)
+        XCTAssertEqual(defaults.data(forKey: WallpaperConfig.unreadableBackupKey), malformed)
+        XCTAssertEqual(controller.message, "Your settings couldn’t be read. Defaults are in use, and the old data was kept.")
+    }
+
+    func testExpectedAndNextSolarChangesIncludeAdjacentDayOffsets() {
+        let previousZone = NSTimeZone.default
+        NSTimeZone.default = TimeZone(identifier: "America/Chicago")!
+        defer { NSTimeZone.default = previousZone }
+        let now = Self.date(hour: 23)
+        let solar = TimeSlot(name: "Before sunrise", trigger: .hoursBeforeSunrise(6), source: .builtIn(assetID: "early"))
+        let fixed = slot("Evening", hour: 20)
+        let config = WallpaperConfig(slots: [fixed, solar], latitude: 59.3293, longitude: -87.6298)
+        let controller = makeController(config: config, now: now)
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: now)!
+        let tonight = controller.resolvedTime(for: solar.trigger, on: tomorrow)!
+        XCTAssertLessThan(tonight, now)
+        XCTAssertGreaterThan(tonight, controller.resolvedTime(for: fixed.trigger, on: now)!)
+        XCTAssertEqual(controller.expectedSlot?.id, solar.id)
+        XCTAssertGreaterThan(controller.nextChange!.date, now)
+    }
+
     func testInvalidCoordinatesAreRejectedAndIgnoredWhenLoadedOrEdited() {
         let invalidPairs: [(Double?, Double?)] = [
             (nil, -18.0), (.nan, 18.0), (69.0, .infinity), (91.0, 18.0), (69.0, -181.0)

@@ -261,6 +261,10 @@ class SlotScheduler: ObservableObject {
     }
 
     func forceUpdate() {
+        // A global target's identity stays the same when displays change, but
+        // an in-flight service transaction may only cover the previous layout.
+        if applyingScheduledTargets != nil { cancelApplication() }
+        refreshGlobalConfirmation()
         lastAppliedTargets = nil
         updateNow()
         scheduleNextUpdate()
@@ -340,12 +344,12 @@ class SlotScheduler: ObservableObject {
         // One application uses one policy even if settings change mid-flight.
         let smoothChanges = config.smoothWallpaperChanges
         let targets = jobs.map(\.target)
+        let displays = dependencies.displayProvider.getDisplays()
         // An aerial all-display change is one service transaction. Custom
         // images use independent screen setters, so split a global request to
         // confirm each screen immediately instead of losing partial success.
         let displayJobs = jobs.flatMap { job -> [ApplicationJob] in
             guard case .custom = job.target.source, job.target.displayUUID == nil else { return [job] }
-            let displays = dependencies.displayProvider.getDisplays()
             guard !displays.isEmpty else { return [job] }
             return displays.map { display in
                 ApplicationJob(target: ApplicationTarget(source: job.target.source, displayUUID: display.uuid), label: display.displayName)
@@ -373,7 +377,7 @@ class SlotScheduler: ObservableObject {
                     try await applySource(job.target.source, displayUUID: job.target.displayUUID, smoothChanges: smoothChanges)
                     try Task.checkCancellation()
                     guard generation == applicationGeneration else { return }
-                    recordConfirmation(job.target)
+                    recordConfirmation(job.target, displays: displays)
                 } catch is CancellationError {
                     return
                 } catch {
@@ -392,19 +396,28 @@ class SlotScheduler: ObservableObject {
         }
     }
 
-    private func recordConfirmation(_ target: ApplicationTarget) {
-        let displays = dependencies.displayProvider.getDisplays()
+    private func recordConfirmation(_ target: ApplicationTarget, displays: [DisplayManager.Display]) {
         if let displayUUID = target.displayUUID {
             confirmedSourcesByDisplay[displayUUID] = target.source
-            // A single global source is meaningful only when every connected
-            // display has actually been confirmed with the same source.
-            let sources = displays.compactMap { confirmedSourcesByDisplay[$0.uuid] }
-            confirmedSource = !displays.isEmpty && sources.count == displays.count && sources.allSatisfy { $0 == target.source }
-                ? target.source : nil
+            refreshGlobalConfirmation()
         } else {
             confirmedSource = target.source
             for display in displays { confirmedSourcesByDisplay[display.uuid] = target.source }
+            // Confirm only the displays this transaction started with.
+            if !dependencies.displayProvider.getDisplays().isEmpty { refreshGlobalConfirmation() }
         }
+    }
+
+    private func refreshGlobalConfirmation() {
+        let displays = dependencies.displayProvider.getDisplays()
+        // No connected display provides new evidence about the last global
+        // success. Keep it while the display provider has no layout available.
+        guard !displays.isEmpty else { return }
+        let sources = displays.compactMap { confirmedSourcesByDisplay[$0.uuid] }
+        // A global source is meaningful only when every connected display has
+        // actually been confirmed with the same source.
+        confirmedSource = sources.count == displays.count && sources.allSatisfy { $0 == sources.first }
+            ? sources.first : nil
     }
 
     private func applySource(_ source: WallpaperSource, displayUUID: String?, smoothChanges: Bool) async throws {
@@ -462,20 +475,22 @@ class SlotScheduler: ObservableObject {
         }.sorted { $0.time < $1.time }
     }
 
+    private func surroundingSchedule(slots: [TimeSlot], around date: Date) -> [(slot: TimeSlot, time: Date)] {
+        // Solar events and their offsets can land outside their nominal day,
+        // including polar estimates and locations in a different time zone.
+        (-2...2).flatMap { offset -> [(slot: TimeSlot, time: Date)] in
+            guard let day = Calendar.current.date(byAdding: .day, value: offset, to: date) else { return [] }
+            return resolvedSchedule(slots: slots, on: day)
+        }.sorted { $0.time < $1.time }
+    }
+
     private func activeSlot(in slots: [TimeSlot], at date: Date) -> TimeSlot? {
-        let today = resolvedSchedule(slots: slots, on: date)
-        if let current = today.last(where: { $0.time <= date }) { return current.slot }
-        guard let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: date) else { return nil }
-        return resolvedSchedule(slots: slots, on: yesterday).last?.slot
+        surroundingSchedule(slots: slots, around: date).last(where: { $0.time <= date })?.slot
     }
 
     private func upcomingTransition(in slots: [TimeSlot], after date: Date) -> (slot: TimeSlot, date: Date)? {
-        if let next = resolvedSchedule(slots: slots, on: date).first(where: { $0.time > date }) {
-            return (next.slot, next.time)
-        }
-        guard let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: date),
-              let first = resolvedSchedule(slots: slots, on: tomorrow).first else { return nil }
-        return (first.slot, first.time)
+        surroundingSchedule(slots: slots, around: date).first(where: { $0.time > date })
+            .map { (slot: $0.slot, date: $0.time) }
     }
 
     private var scheduleGroups: [[TimeSlot]] {

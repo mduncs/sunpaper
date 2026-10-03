@@ -266,6 +266,17 @@ final class TimeSlotTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(WallpaperConfig.decodeCompatible(from: legacyEnvelope)).smoothWallpaperChanges)
     }
 
+    func testFixedTimeDSTGapMatchesSchedulerAndControllerResolution() {
+        let previousZone = NSTimeZone.default
+        NSTimeZone.default = TimeZone(identifier: "America/Chicago")!
+        defer { NSTimeZone.default = previousZone }
+        let day = Calendar.current.date(from: DateComponents(year: 2026, month: 3, day: 8))!
+        let trigger = Trigger.fixed(hour: 2, minute: 30)
+        let sunTimes = SunCalculator.calculate(for: chicagoLocation, on: day)
+        let scheduled = Calendar.current.date(bySettingHour: 2, minute: 30, second: 0, of: day)!
+        XCTAssertEqual(trigger.resolveTime(sunTimes: sunTimes, on: day), scheduled)
+    }
+
     // MARK: - DST Edge Case
 
     func testFixedTimeDSTSpringForward() {

@@ -4,6 +4,24 @@ import CoreLocation
 
 final class SunCalculatorTests: XCTestCase {
 
+    func testSolarTimesDoNotDependOnQueryHourDuringDSTChanges() {
+        let previousZone = NSTimeZone.default
+        NSTimeZone.default = TimeZone(identifier: "America/Chicago")!
+        defer { NSTimeZone.default = previousZone }
+        let location = CLLocationCoordinate2D(latitude: 41.8781, longitude: -87.6298)
+        for (month, day) in [(3, 8), (11, 1)] {
+            let midnight = Calendar.current.date(from: DateComponents(year: 2026, month: month, day: day))!
+            let noon = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: midnight)!
+            let early = SunCalculator.calculate(for: location, on: midnight)
+            let late = SunCalculator.calculate(for: location, on: noon)
+            XCTAssertEqual(early.sunrise, late.sunrise)
+            XCTAssertEqual(early.sunset, late.sunset)
+            XCTAssertEqual(early.solarNoon, late.solarNoon)
+            XCTAssertEqual(early.civilDawn, late.civilDawn)
+            XCTAssertEqual(early.civilDusk, late.civilDusk)
+        }
+    }
+
     // MARK: - Basic Functionality
 
     func testSunriseBeforeSunset() {

@@ -94,27 +94,9 @@ enum Trigger: Codable, Equatable {
             return baseTime.addingTimeInterval(offset)
 
         case .fixed(let hour, let minute):
-            var components = calendar.dateComponents([.year, .month, .day], from: date)
-            components.hour = hour
-            components.minute = minute
-            components.second = 0
-
-            // Handle DST transitions where the time might not exist
-            // (e.g., 02:30 during spring forward)
-            if let resolved = calendar.date(from: components) {
-                return resolved
-            }
-
-            // Time doesn't exist (DST gap) - try adding 1 hour
-            components.hour = hour + 1
-            if let resolved = calendar.date(from: components) {
-                return resolved
-            }
-
-            // Fallback to noon on the same day
-            components.hour = 12
-            components.minute = 0
-            return calendar.date(from: components) ?? date
+            // Match the scheduler and controller: advance a nonexistent time
+            // to the next valid clock time and use the first repeated time.
+            return calendar.date(bySettingHour: hour, minute: minute, second: 0, of: date) ?? date
         }
     }
 
@@ -272,10 +254,18 @@ struct WallpaperConfig: Codable, Equatable {
     }
 
     private enum EnvelopeCodingKeys: String, CodingKey {
+        case schemaVersion
         case wallpaperConfig
     }
 
     init(from decoder: Decoder) throws {
+        if let envelope = try? decoder.container(keyedBy: EnvelopeCodingKeys.self),
+           envelope.contains(.schemaVersion) {
+            // A malformed versioned envelope must not fall through to the
+            // legacy decoder's missing-key defaults and lose its backup.
+            self = try AppPreferencesEnvelope(from: decoder).wallpaperConfig
+            return
+        }
         if let envelope = try? decoder.container(keyedBy: EnvelopeCodingKeys.self),
            envelope.contains(.wallpaperConfig) {
             self = try envelope.decode(WallpaperConfig.self, forKey: .wallpaperConfig)
