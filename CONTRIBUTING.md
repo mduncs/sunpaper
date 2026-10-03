@@ -30,6 +30,7 @@ the real desktop. A passing build or local launch is not a live handoff test.
 | `SunpaperTests` | Unit tests and wallpaper-only regression fixtures |
 | `screenshots` | Current UI examples and repository branding |
 | `scripts/screenshots` | Reproducible offscreen screenshot renderer |
+| `scripts/video` | [Custom video wallpaper](scripts/video/README.md) research, encoder, and checker |
 | `scripts/release.sh` | Signed/notarized release packaging |
 
 Keep generated builds in ignored `build/` and packages in ignored `dist/`.
