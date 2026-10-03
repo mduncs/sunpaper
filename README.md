@@ -106,9 +106,10 @@ an Apple aerial, and reopen Sunpaper. Missing selected aerials are downloaded
 when needed. A row's **Download again** fetches a fresh copy without discarding
 the working file until replacement succeeds.
 
-If a change fails, use **Retry** after addressing the reported problem. Missing
-screen capture access doesn't block changes; they happen without smoothing
-until you allow access and choose **Quit & Reopen** in Settings. Use
+If a change fails, use **Retry** after addressing the reported problem. If the
+failed change left the previous picture covering your desktop, Retry restores it
+first. Missing screen capture access doesn't block changes; they happen without
+smoothing until you allow access and choose **Quit & Reopen** in Settings. Use
 **Restore desktop** if it appears after a failed recovery.
 
 If your saved settings can't be read, Sunpaper starts from defaults and keeps

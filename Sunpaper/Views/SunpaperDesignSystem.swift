@@ -357,7 +357,7 @@ struct DayRibbonModel {
 
         // Solar offsets can move a change into an adjacent calendar day. Resolve
         // those anchor days too, and use the actual preceding change at midnight.
-        let marks = [-1, 0, 1].flatMap { offset -> [(slot: TimeSlot, time: Date)] in
+        let marks = (-2...2).flatMap { offset -> [(slot: TimeSlot, time: Date)] in
             guard let anchorDay = Calendar.current.date(byAdding: .day, value: offset, to: date) else { return [] }
             return controller.slots.filter { $0.isEnabled && $0.source != .none }
                 .compactMap { slot in controller.resolvedTime(for: slot.trigger, on: anchorDay).map { (slot: slot, time: $0) } }

@@ -15,8 +15,8 @@ xcodebuild build -project Sunpaper.xcodeproj -scheme Sunpaper \
   -configuration Release -derivedDataPath build/release-check CODE_SIGNING_ALLOWED=NO
 ```
 
-These commands produce local, unsigned verification builds. The September 12,
-2026 baseline is **182 passing unit tests** and a successful Release build.
+These commands produce local, unsigned verification builds. The October 2,
+2026 baseline is **218 passing unit tests** and a successful Release build.
 Tests inject wallpaper services, timers, and display state; they do not change
 the real desktop. A passing build or local launch is not a live handoff test.
 
@@ -113,9 +113,13 @@ again after blending before removing covers.
 On failure, restore the exact pre-change `Index.plist` and verify the previous
 appearance under cover. Failed restoration retains the cover and exposes
 **Restore desktop**, without leaving a permanent polling loop. Resolve any
-retained cover before another change, even with smoothing off. An uncovered
-restoration failure must not claim a cover exists. Quit waits for pending work
-and asks before discarding a retained recovery cover.
+retained cover before another change, even with smoothing off: **Retry**
+restores first, then retries the change. Covers fit only the display layout
+they were captured for. After a display change they can't be verified, so
+recovery removes them and restores uncovered. Display changes settle for two
+seconds, then retry a retained recovery once before reconciling the schedule.
+An uncovered restoration failure must not claim a cover exists. Quit waits for
+pending work and asks before discarding a retained recovery cover.
 
 ### Validation limits
 
