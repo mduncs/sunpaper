@@ -11,28 +11,29 @@ struct MenuBarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            nowCard.padding([.horizontal, .top], 10)
+            nowCard.padding([.horizontal, .top], 12)
             Button {
                 controller.setFollowing(!isFollowing)
             } label: {
                 Label(isFollowing ? "Pause schedule" : "Resume schedule",
                       systemImage: isFollowing ? "pause.fill" : "play.fill")
+                    .font(.body.weight(.semibold))
             }
-            .buttonStyle(SunpaperActionButtonStyle(prominent: !isFollowing))
-            .padding(.horizontal, 14).padding(.vertical, 12)
+            .buttonStyle(SunpaperActionButtonStyle(prominent: !isFollowing, height: 36))
+            .padding(.horizontal, 16).padding(.vertical, 14)
             Divider().padding(.horizontal, 14)
             VStack(spacing: 2) {
                 command("Use another wallpaper…", symbol: "photo.on.rectangle", action: onChooseWallpaper)
                 command("Edit schedule…", symbol: "calendar.day.timeline.left", action: onEditSchedule)
-            }.padding(.horizontal, 8).padding(.vertical, 6)
+            }.padding(.horizontal, 8).padding(.vertical, 8)
             Divider().padding(.horizontal, 14)
             HStack {
                 Button("Settings…", action: onOpenSettings).keyboardShortcut(",", modifiers: .command)
                 Spacer()
                 Button("Quit Sunpaper", action: onQuit).keyboardShortcut("q", modifiers: .command)
             }
-            .buttonStyle(.plain).font(.caption).foregroundStyle(.secondary)
-            .padding(.horizontal, 16).padding(.vertical, 11)
+            .buttonStyle(.plain).font(.callout).foregroundStyle(.secondary)
+            .padding(.horizontal, 16).padding(.vertical, 13)
         }
         .frame(width: SunpaperSize.popoverWidth, height: SunpaperSize.popoverHeight, alignment: .top)
         .background(SunpaperColor.surface)
@@ -43,27 +44,27 @@ struct MenuBarView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 Image(systemName: "sun.horizon.fill").symbolRenderingMode(.multicolor)
-                Text("Sunpaper").font(.subheadline.weight(.semibold))
+                Text("Sunpaper").font(.headline)
                 Spacer()
                 if controller.config.displayMode == .perDisplay {
                     Label(controller.scopeName, systemImage: "display").font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
             HStack(spacing: 12) {
-                WallpaperThumbnail(source: controller.shownSource, size: CGSize(width: 100, height: 62), cornerRadius: 8)
+                WallpaperThumbnail(source: controller.shownSource, size: CGSize(width: 120, height: 75), cornerRadius: 8)
                     .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.white.opacity(0.15)))
                     .shadow(color: .black.opacity(0.35), radius: 6, y: 3)
-                VStack(alignment: .leading, spacing: 6) {
-                    StatusPill(title: controller.stateTitle, tone: controller.statusTone)
-                    Text(wallpaperName(controller.shownSource)).font(.headline).lineLimit(2)
+                VStack(alignment: .leading, spacing: 8) {
+                    StatusPill(title: controller.stateTitle, tone: controller.statusTone, font: .subheadline)
+                    Text(wallpaperName(controller.shownSource)).font(.title3.weight(.semibold)).lineLimit(2)
                 }
                 Spacer(minLength: 0)
             }
             .padding(.top, 14)
-            detailLine.frame(height: 24).padding(.top, 10)
-            DayRibbon(controller: controller, stripHeight: 22, showsLabels: false).padding(.top, 8)
+            detailLine.frame(height: 28).padding(.top, 10)
+            DayRibbon(controller: controller, stripHeight: 30, showsLabels: false).padding(.top, 8)
         }
-        .padding(14)
+        .padding(16)
         .ambientCard(controller.shownSource, cornerRadius: 12)
     }
 
@@ -71,7 +72,7 @@ struct MenuBarView: View {
         if controller.scheduler.lastError != nil {
             HStack {
                 Label("Couldn’t finish the last change.", systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.callout).foregroundStyle(.secondary)
                 Spacer(minLength: 4)
                 Button("Retry") { controller.scheduler.retryLastApplication() }.controlSize(.small)
             }
@@ -86,7 +87,7 @@ struct MenuBarView: View {
                 Spacer(minLength: 0)
             }
         } else {
-            Text(controller.stateDetail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            Text(controller.stateDetail).font(.callout).foregroundStyle(.secondary).lineLimit(2)
                 .frame(maxHeight: .infinity, alignment: .leading)
         }
     }
@@ -94,11 +95,11 @@ struct MenuBarView: View {
     private func command(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                Image(systemName: symbol).foregroundStyle(SunpaperColor.accent).frame(width: 20)
+                Image(systemName: symbol).foregroundStyle(SunpaperColor.accent).frame(width: 22)
                 Text(title)
                 Spacer()
             }
-            .padding(.horizontal, 8).padding(.vertical, 7)
+            .font(.body).padding(.horizontal, 8).padding(.vertical, 9)
         }
         .buttonStyle(SunpaperRowButtonStyle())
     }

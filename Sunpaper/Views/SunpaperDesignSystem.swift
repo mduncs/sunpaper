@@ -4,8 +4,8 @@ import CoreImage
 import ImageIO
 
 enum SunpaperSize {
-    static let popoverWidth: CGFloat = 328
-    static let popoverHeight: CGFloat = 404
+    static let popoverWidth: CGFloat = 376
+    static let popoverHeight: CGFloat = 470
     static let scheduleWidth: CGFloat = 780
     static let scheduleHeight: CGFloat = 720
     static let scheduleMinWidth: CGFloat = 720
@@ -156,12 +156,13 @@ extension SunpaperController {
 struct StatusPill: View {
     let title: String
     let tone: SunpaperStatusTone
+    var font: Font = .caption
 
     var body: some View {
         HStack(spacing: 6) {
             Circle().fill(tone.color).frame(width: 6, height: 6)
                 .shadow(color: tone.color.opacity(0.8), radius: 3)
-            Text(title).font(.caption.weight(.medium)).lineLimit(1)
+            Text(title).font(font.weight(.medium)).lineLimit(1)
         }
         .padding(.horizontal, 8).padding(.vertical, 3)
         .background(.white.opacity(0.12), in: Capsule())
@@ -383,11 +384,12 @@ private struct DayRibbonModel {
 /// A full-width action. Prominent actions use the accent fill.
 struct SunpaperActionButtonStyle: ButtonStyle {
     var prominent = false
+    var height: CGFloat = 30
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.callout.weight(.semibold))
-            .frame(maxWidth: .infinity).frame(height: 30)
+            .frame(maxWidth: .infinity).frame(height: height)
             .foregroundStyle(prominent ? SunpaperColor.onAccent : Color.primary)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
