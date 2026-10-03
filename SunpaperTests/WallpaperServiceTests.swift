@@ -1,11 +1,117 @@
 import XCTest
 import AppKit
+import ImageIO
 @testable import Sunpaper
 
 @MainActor
 final class WallpaperServiceTests: XCTestCase {
     // These tests must not call setWallpaper(assetID:) because that mutates the
     // user's real macOS wallpaper Index.plist.
+
+    func testCancelledRedownloadPreservesWorkingFileAndRemovesTemporaryFile() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let destination = directory.appendingPathComponent("asset.mov")
+        let temporary = directory.appendingPathComponent("download.tmp")
+        try Data("working".utf8).write(to: destination)
+        try Data("replacement".utf8).write(to: temporary)
+        let remote = URL(string: "https://example.com/aerial.mov")!
+        let service = WallpaperService(videosDirectoryURL: directory) { url in
+            // Model cancellation just as URLSession finishes delivering a file.
+            withUnsafeCurrentTask { $0?.cancel() }
+            return (temporary, HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+        let task = Task { try await service.redownloadAerial(assetID: "asset", from: remote) }
+        do { try await task.value; XCTFail("Expected cancellation") }
+        catch is CancellationError {} catch { XCTFail("Unexpected error: \(error)") }
+        XCTAssertEqual(try Data(contentsOf: destination), Data("working".utf8))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: temporary.path))
+    }
+
+    func testIdleModeRecoveryWriteIsRequired() throws {
+        let data = try PropertyListSerialization.data(fromPropertyList: [
+            "AllSpacesAndDisplays": ["Type": "idle"]
+        ], format: .binary, options: 0)
+        let plan = try WallpaperService.shared.planAerialWallpaperChange(assetID: "asset", plistData: data)
+        let modeWrite = try XCTUnwrap(plan.mutations.first { $0.keyPath == "AllSpacesAndDisplays.Type" })
+        XCTAssertTrue(modeWrite.isRequired, "A failed mode switch must not report a successful aerial change")
+    }
+
+    func testPerDisplayPlanTranslatesPersistedIdentifierToWallpaperStoreUUID() throws {
+        let persisted = "00000610-0000A001-00000000"
+        let native = "2C2AA742-7DE3-4C67-85E2-8D5D5466C641"
+        let other = "92C5959A-666B-43A0-B77C-70D2D25C0174"
+        let data = try PropertyListSerialization.data(fromPropertyList: [
+            "AllSpacesAndDisplays": ["Type": "individual"],
+            "Displays": [native: [:], other: [:]]
+        ], format: .binary, options: 0)
+        let plan = try WallpaperService.shared.planAerialWallpaperChange(
+            assetID: "asset", displayUUID: persisted, plistData: data,
+            displayUUIDMapping: [persisted: native])
+        XCTAssertEqual(plan.target, .display(uuid: native))
+        XCTAssertEqual(plan.configurationKeyPaths, [.desktopConfiguration(for: native)])
+        XCTAssertFalse(plan.mutations.contains { $0.keyPath.contains(persisted) || $0.keyPath.contains(other) })
+    }
+
+    func testFailedRedownloadPreservesWorkingFileAndCleansTemporaryDownload() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let destination = directory.appendingPathComponent("asset.mov")
+        let temporary = directory.appendingPathComponent("download.tmp")
+        try Data("working".utf8).write(to: destination)
+        try Data("server error".utf8).write(to: temporary)
+        let service = WallpaperService(videosDirectoryURL: directory) { url in
+            (temporary, HTTPURLResponse(url: url, statusCode: 500, httpVersion: nil, headerFields: nil)!)
+        }
+        do {
+            try await service.redownloadAerial(assetID: "asset", from: URL(string: "https://example.com/aerial.mov")!)
+            XCTFail("Expected HTTP failure")
+        } catch WallpaperError.downloadFailed {} catch { XCTFail("Unexpected error: \(error)") }
+        XCTAssertEqual(try Data(contentsOf: destination), Data("working".utf8))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: temporary.path))
+    }
+
+    func testSuccessfulRedownloadReplacesWorkingFileAndConsumesTemporaryDownload() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let destination = directory.appendingPathComponent("asset.mov")
+        let temporary = directory.appendingPathComponent("download.tmp")
+        try Data("working".utf8).write(to: destination)
+        try Data("replacement".utf8).write(to: temporary)
+        let service = WallpaperService(videosDirectoryURL: directory) { url in
+            (temporary, HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+        try await service.redownloadAerial(assetID: "asset", from: URL(string: "https://example.com/aerial.mov")!)
+        XCTAssertEqual(try Data(contentsOf: destination), Data("replacement".utf8))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: temporary.path))
+    }
+
+    func testCustomWallpaperRejectsUnreadableAndAnimatedImages() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let unreadable = directory.appendingPathComponent("broken.jpg")
+        try Data("not an image".utf8).write(to: unreadable)
+        XCTAssertThrowsError(try WallpaperService.shared.validateCustomWallpaper(path: unreadable.path))
+        let animated = directory.appendingPathComponent("animation.png")
+        // The extension alone cannot distinguish a still image from an animation.
+        let output = try XCTUnwrap(CGImageDestinationCreateWithURL(animated as CFURL, "com.compuserve.gif" as CFString, 2, nil))
+        let context = try XCTUnwrap(CGContext(data: nil, width: 2, height: 2, bitsPerComponent: 8,
+            bytesPerRow: 8, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        for color in [CGColor(red: 1, green: 0, blue: 0, alpha: 1), CGColor(red: 0, green: 0, blue: 1, alpha: 1)] {
+            context.setFillColor(color)
+            context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+            CGImageDestinationAddImage(output, try XCTUnwrap(context.makeImage()), nil)
+        }
+        XCTAssertTrue(CGImageDestinationFinalize(output))
+        let source = try XCTUnwrap(CGImageSourceCreateWithURL(animated as CFURL, nil))
+        XCTAssertEqual(CGImageSourceGetCount(source), 2)
+        XCTAssertThrowsError(try WallpaperService.shared.validateCustomWallpaper(path: animated.path))
+    }
 
     // MARK: - WallpaperError Description Tests
 
@@ -222,7 +328,7 @@ final class WallpaperServiceTests: XCTestCase {
         }
     }
 
-    func testCustomWallpaperAcceptsSupportedImageFormats() {
+    func testCustomWallpaperAcceptsSupportedImageFormats() throws {
         // Test that supported formats don't throw unsupportedFormat or customFileNotFound
         let tempDir = FileManager.default.temporaryDirectory
         let supportedFormats = ["heic", "jpg", "jpeg", "png", "tiff", "bmp"]
@@ -230,8 +336,7 @@ final class WallpaperServiceTests: XCTestCase {
         for ext in supportedFormats {
             let tempFile = tempDir.appendingPathComponent("test.\(ext)")
 
-            // Create empty file
-            FileManager.default.createFile(atPath: tempFile.path, contents: Data())
+            try writeStillImage(to: tempFile)
             defer {
                 try? FileManager.default.removeItem(at: tempFile)
             }
@@ -250,6 +355,8 @@ final class WallpaperServiceTests: XCTestCase {
                     XCTFail(".\(ext) file exists but got customFileNotFound error")
                 case .customVideoNotSupported:
                     XCTFail(".\(ext) is an image but got customVideoNotSupported error")
+                case .customImageUnreadable:
+                    XCTFail(".\(ext) contains a readable still image")
                 case .transitionInProgress, .noMainScreen, .plistNotFound, .plistUpdateFailed, .agentRestartFailed, .aerialNotDownloaded, .downloadFailed:
                     // These are acceptable - system/environment issues, not format issues
                     break
@@ -293,13 +400,13 @@ final class WallpaperServiceTests: XCTestCase {
 
     // MARK: - Extension Parsing Tests
 
-    func testFileExtensionIsCaseInsensitive() {
+    func testFileExtensionIsCaseInsensitive() throws {
         let tempDir = FileManager.default.temporaryDirectory
         let service = WallpaperService.shared
 
         // Test uppercase extension
         let uppercaseFile = tempDir.appendingPathComponent("test.JPG")
-        FileManager.default.createFile(atPath: uppercaseFile.path, contents: Data())
+        try writeStillImage(to: uppercaseFile)
         defer {
             try? FileManager.default.removeItem(at: uppercaseFile)
         }
@@ -324,7 +431,7 @@ final class WallpaperServiceTests: XCTestCase {
 
         // Test mixed case
         let mixedFile = tempDir.appendingPathComponent("test.JpEg")
-        FileManager.default.createFile(atPath: mixedFile.path, contents: Data())
+        try writeStillImage(to: mixedFile)
         defer {
             try? FileManager.default.removeItem(at: mixedFile)
         }
@@ -346,6 +453,15 @@ final class WallpaperServiceTests: XCTestCase {
     }
 
     // MARK: - Singleton Tests
+
+    private func writeStillImage(to url: URL) throws {
+        let output = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil))
+        let image = try XCTUnwrap(CGContext(data: nil, width: 2, height: 2, bitsPerComponent: 8,
+            bytesPerRow: 8, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)?.makeImage())
+        CGImageDestinationAddImage(output, image, nil)
+        XCTAssertTrue(CGImageDestinationFinalize(output))
+    }
 
     func testSharedInstanceIsSingleton() {
         let instance1 = WallpaperService.shared

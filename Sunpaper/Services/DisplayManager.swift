@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import ColorSync
 import IOKit
 import IOKit.graphics
 
@@ -124,6 +125,21 @@ final class DisplayManager: Sendable {
         }
 
         return String(format: "display-%08X", displayID)
+    }
+
+    /// Index.plist uses macOS display UUIDs, not our persisted hardware identifiers.
+    /// Keep saved schedule identifiers unchanged and translate only at the write boundary.
+    @MainActor
+    func getWallpaperDisplayUUID(for displayUUID: String) -> String? {
+        for screen in NSScreen.screens {
+            guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber,
+                  getDisplayUUID(displayID: number.uint32Value) == displayUUID,
+                  let uuid = CGDisplayCreateUUIDFromDisplayID(number.uint32Value)?.takeRetainedValue() else {
+                continue
+            }
+            return CFUUIDCreateString(nil, uuid) as String
+        }
+        return nil
     }
 
     /// Get human-readable name for a display

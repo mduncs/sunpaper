@@ -5,6 +5,41 @@ import XCTest
 final class WallpaperTransitionTests: XCTestCase {
     private enum Failure: Error { case write, readiness, restore }
 
+    func testFailedMutationJoinsReadinessSamplingBeforeRecovery() async {
+        let sampling = expectation(description: "sampling started")
+        let cancelled = expectation(description: "sampling cancelled")
+        let stopped = expectation(description: "sampling stopped")
+        var finishSampling: CheckedContinuation<Void, Never>?
+        var events: [String] = []
+        let task = Task {
+            try await WallpaperTransitionTransaction.perform(change: {
+                let _: Void = try await WallpaperTransitionTransaction.observeReload(change: {
+                    await self.fulfillment(of: [sampling], timeout: 2)
+                    throw Failure.write
+                }, observe: {
+                    await withTaskCancellationHandler {
+                        await withCheckedContinuation { continuation in
+                            finishSampling = continuation
+                            sampling.fulfill()
+                        }
+                    } onCancel: { cancelled.fulfill() }
+                    events.append("sampling stopped")
+                    stopped.fulfill()
+                    try Task.checkCancellation()
+                })
+            }, finish: { XCTFail("Must not reveal") }, recover: { events.append("restored") })
+        }
+        await fulfillment(of: [cancelled], timeout: 2)
+        // Give recovery an opportunity to start while capture is still suspended.
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertTrue(events.isEmpty, "Recovery must not overlap the previous reload's capture")
+        finishSampling?.resume()
+        do { try await task.value; XCTFail("Expected write failure") }
+        catch Failure.write {} catch { XCTFail("Unexpected error: \(error)") }
+        await fulfillment(of: [stopped], timeout: 2)
+        XCTAssertEqual(events, ["sampling stopped", "restored"])
+    }
+
     func testMonochromeAndDarkScenesMatchWithoutColorOrBrightnessHeuristics() {
         for level in [0.04, 0.4, 0.8] {
             let values = (0..<96).map { index in level + Double(index % 9) * 0.004 }

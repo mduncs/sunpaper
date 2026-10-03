@@ -151,6 +151,27 @@ struct WallpaperReloadReadiness {
 /// Recovery must finish even when a scheduler or preview task was cancelled.
 @MainActor
 enum WallpaperTransitionTransaction {
+    static func observeReload<T>(change: () async throws -> Void,
+                                 observe: @escaping @MainActor () async throws -> T) async throws -> T {
+        let readinessTask = Task { @MainActor in try await observe() }
+        defer { readinessTask.cancel() }
+        return try await withTaskCancellationHandler {
+            do {
+                try await change()
+                try Task.checkCancellation()
+                return try await readinessTask.value
+            } catch {
+                // A capture can finish asynchronously after cancellation. Join
+                // it before recovery starts or the transaction releases covers.
+                readinessTask.cancel()
+                _ = await readinessTask.result
+                throw error
+            }
+        } onCancel: {
+            readinessTask.cancel()
+        }
+    }
+
     static func perform(change: () async throws -> Void,
                         finish: () async throws -> Void,
                         recover: @escaping @MainActor () async throws -> Void,
@@ -447,16 +468,8 @@ final class WallpaperTransition: ObservableObject, WallpaperRecovering {
                                change: () async throws -> Void) async throws -> [CGDirectDisplayID: CGImage] {
         // Start sampling BEFORE the restart, not after it. A similar-looking old
         // scene must not count as the new wallpaper before the renderer reloads.
-        let readinessTask = Task { @MainActor in
+        return try await WallpaperTransitionTransaction.observeReload(change: change) { [self] in
             try await waitUntilReady(covers: covers, expected: expected)
-        }
-        defer { readinessTask.cancel() }
-        return try await withTaskCancellationHandler {
-            try await change()
-            try Task.checkCancellation()
-            return try await readinessTask.value
-        } onCancel: {
-            readinessTask.cancel()
         }
     }
 

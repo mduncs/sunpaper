@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import ImageIO
 
 // MARK: - Wallpaper Operation Planning
 
@@ -163,15 +164,28 @@ final class WallpaperService: @unchecked Sendable {
             .appendingPathComponent("Index.plist")
     }()
 
-    private let videosDirectoryURL: URL = {
+    private static var defaultVideosDirectoryURL: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return appSupport
             .appendingPathComponent("com.apple.wallpaper")
             .appendingPathComponent("aerials")
             .appendingPathComponent("videos")
-    }()
+    }
 
-    private init() {}
+    private let videosDirectoryURL: URL
+    private let downloadFile: @Sendable (URL) async throws -> (URL, URLResponse)
+
+    private convenience init() {
+        self.init(videosDirectoryURL: Self.defaultVideosDirectoryURL) {
+            try await URLSession.shared.download(from: $0)
+        }
+    }
+
+    init(videosDirectoryURL: URL,
+         downloadFile: @escaping @Sendable (URL) async throws -> (URL, URLResponse)) {
+        self.videosDirectoryURL = videosDirectoryURL
+        self.downloadFile = downloadFile
+    }
 
     /// Download an aerial video to the local videos directory.
     func downloadAerial(assetID: String, from url: URL) async throws {
@@ -189,6 +203,7 @@ final class WallpaperService: @unchecked Sendable {
         from url: URL,
         replacingExisting: Bool
     ) async throws {
+        try Task.checkCancellation()
         let destination = videoURL(assetID: assetID)
 
         // Already downloaded
@@ -201,11 +216,12 @@ final class WallpaperService: @unchecked Sendable {
         print("[WallpaperService] Downloading aerial \(assetID) from \(url)")
         #endif
 
-        let (tempURL, response) = try await URLSession.shared.download(from: url)
+        let (tempURL, response) = try await downloadFile(url)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        try Task.checkCancellation()
 
         guard let httpResponse = response as? HTTPURLResponse,
               (200...299).contains(httpResponse.statusCode) else {
-            try? FileManager.default.removeItem(at: tempURL)
             throw WallpaperError.downloadFailed(assetID: assetID)
         }
 
@@ -221,7 +237,6 @@ final class WallpaperService: @unchecked Sendable {
             #endif
         } catch {
             // A concurrent normal download may have completed first.
-            try? FileManager.default.removeItem(at: tempURL)
             guard !replacingExisting,
                   FileManager.default.fileExists(atPath: destination.path) else {
                 throw error
@@ -238,9 +253,11 @@ final class WallpaperService: @unchecked Sendable {
     func planAerialWallpaperChange(
         assetID: String,
         displayUUID: String? = nil,
-        plistData: Data
+        plistData: Data,
+        displayUUIDMapping: [String: String] = [:]
     ) throws -> WallpaperOperationPlan {
-        try makeAerialWallpaperPlan(assetID: assetID, displayUUID: displayUUID, plistData: plistData)
+        let targetUUID = displayUUID.map { displayUUIDMapping[$0] ?? $0 }
+        return try makeAerialWallpaperPlan(assetID: assetID, displayUUID: targetUUID, plistData: plistData)
     }
 
     /// Set wallpaper by asset ID for all displays.
@@ -282,7 +299,15 @@ final class WallpaperService: @unchecked Sendable {
             // Snapshot before any process is stopped; recovery uses the exact
             // configuration, including custom providers and per-Space entries.
             let original = try Data(contentsOf: indexPlistURL)
-            let plan = try makeAerialWallpaperPlan(assetID: assetID, displayUUID: displayUUID, plistData: original)
+            var displayUUIDMapping: [String: String] = [:]
+            if let displayUUID {
+                guard let nativeUUID = DisplayManager.shared.getWallpaperDisplayUUID(for: displayUUID) else {
+                    throw WallpaperError.noMainScreen
+                }
+                displayUUIDMapping[displayUUID] = nativeUUID
+            }
+            let plan = try planAerialWallpaperChange(assetID: assetID, displayUUID: displayUUID,
+                plistData: original, displayUUIDMapping: displayUUIDMapping)
             logDiagnostics(plan.diagnostics)
             try await WallpaperTransition.shared.perform(videoURL: videoURL(assetID: assetID), displayUUID: displayUUID, smoothChanges: smoothChanges) {
                 // Process waits and plist tools must not block AppKit's cover rendering.
@@ -326,6 +351,15 @@ final class WallpaperService: @unchecked Sendable {
         let url = URL(fileURLWithPath: path)
         let ext = url.pathExtension.lowercased()
         if ["heic", "jpg", "jpeg", "png", "tiff", "bmp"].contains(ext) {
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceThumbnailMaxPixelSize: 1
+            ]
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  CGImageSourceGetCount(source) == 1,
+                  CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) != nil else {
+                throw WallpaperError.customImageUnreadable
+            }
             return url
         } else if ["mov", "mp4", "m4v"].contains(ext) {
             throw WallpaperError.customVideoNotSupported
@@ -398,7 +432,7 @@ final class WallpaperService: @unchecked Sendable {
             mutations.append(WallpaperPlistMutation(
                 keyPath: Constants.allSpacesTypeKeyPath,
                 value: .string(Constants.linkedTypeValue),
-                isRequired: false,
+                isRequired: true,
                 purpose: "idle mode linked recovery"
             ))
         }
@@ -552,7 +586,7 @@ final class WallpaperService: @unchecked Sendable {
             case .idle:
                 diagnostics.append(WallpaperDiagnostic(
                     severity: .warning,
-                    message: "Index.plist is in idle mode; plan includes a non-fatal linked-mode recovery before aerial writes.",
+                    message: "Index.plist is in idle mode; plan requires linked-mode recovery before aerial writes.",
                     recoveryHint: "Idle mode uses different key paths, so direct aerial writes target linked mode after recovery."
                 ))
                 return (WallpaperPlistKeyPath.linkedConfigurationKeyPaths, true, diagnostics)
@@ -748,6 +782,7 @@ enum WallpaperError: LocalizedError {
     case agentRestartFailed
     case customFileNotFound(path: String)
     case customVideoNotSupported
+    case customImageUnreadable
     case unsupportedFormat(ext: String)
     case noMainScreen
     case aerialNotDownloaded(assetID: String)
@@ -767,6 +802,8 @@ enum WallpaperError: LocalizedError {
             return "Custom wallpaper file not found: \(path)"
         case .customVideoNotSupported:
             return "Custom video wallpapers are not yet supported. Use Apple's built-in aerials for video backgrounds."
+        case .customImageUnreadable:
+            return "This file could not be read as a still image. Choose a supported image with a single frame."
         case .unsupportedFormat(let ext):
             return "Unsupported wallpaper format: .\(ext)"
         case .noMainScreen:
@@ -792,6 +829,8 @@ enum WallpaperError: LocalizedError {
             return "Choose an existing image file."
         case .customVideoNotSupported:
             return "Use a built-in aerial video wallpaper or choose a static image file."
+        case .customImageUnreadable:
+            return "Choose a readable HEIC, JPG, JPEG, PNG, TIFF, or BMP still image."
         case .unsupportedFormat:
             return "Choose a HEIC, JPG, JPEG, PNG, TIFF, or BMP image."
         case .noMainScreen:
