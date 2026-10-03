@@ -116,6 +116,35 @@ final class WallpaperTransitionTests: XCTestCase {
         } catch { XCTFail("Unexpected error: \(error)") }
     }
 
+    func testRecoveryAfterDisplayChangeRemovesCoversAndRestoresWithoutThem() async throws {
+        var events: [String] = []
+        try await WallpaperCoverRecovery.perform(
+            layoutMatches: false,
+            removeCovers: { events.append("remove") },
+            restore: { events.append("restore") },
+            verifiedRestore: { XCTFail("Stale covers can never be verified") })
+        XCTAssertEqual(events, ["remove", "restore"])
+    }
+
+    func testRecoveryWithUnchangedLayoutKeepsCoversForVerifiedRestore() async throws {
+        var events: [String] = []
+        try await WallpaperCoverRecovery.perform(
+            layoutMatches: true,
+            removeCovers: { XCTFail("Covers must stay up while they still fit") },
+            restore: { XCTFail("Restore runs inside the verified path") },
+            verifiedRestore: { events.append("verified") })
+        XCTAssertEqual(events, ["verified"])
+    }
+
+    func testFailedRestoreAfterDisplayChangeStillReportsFailure() async {
+        do {
+            try await WallpaperCoverRecovery.perform(
+                layoutMatches: false, removeCovers: {},
+                restore: { throw Failure.restore }, verifiedRestore: {})
+            XCTFail("Expected restoration failure")
+        } catch Failure.restore {} catch { XCTFail("Unexpected error: \(error)") }
+    }
+
     func testCancellationAfterMutationStillCompletesUncancelledRecovery() async {
         let changed = expectation(description: "mutation started")
         var resumeMutation: CheckedContinuation<Void, Never>?

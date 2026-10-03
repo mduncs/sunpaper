@@ -126,7 +126,7 @@ struct SettingsView: View {
                 DisclosureGroup("Troubleshooting") {
                     Text("If macOS asked you to quit and reopen Sunpaper after allowing access, do that before trying another change. Reduce Motion in macOS Accessibility settings is respected.")
                         .font(.caption).foregroundStyle(.secondary)
-                    Button("Retry wallpaper change") { controller.scheduler.retryLastApplication() }
+                    Button("Retry wallpaper change") { Task { await controller.retryWallpaperChange() } }
                     Button("Open macOS Wallpaper settings…") {
                         if let url = URL(string: "x-apple.systempreferences:com.apple.Wallpaper-Settings.extension") { NSWorkspace.shared.open(url) }
                     }

@@ -74,7 +74,7 @@ struct MenuBarView: View {
                 Label("Couldn’t finish the last change.", systemImage: "exclamationmark.triangle.fill")
                     .font(.callout).foregroundStyle(.secondary)
                 Spacer(minLength: 4)
-                Button("Retry") { controller.scheduler.retryLastApplication() }.controlSize(.small)
+                Button("Retry") { Task { await controller.retryWallpaperChange() } }.controlSize(.small)
             }
         } else if case .temporary = controller.scheduler.playbackMode {
             HStack {

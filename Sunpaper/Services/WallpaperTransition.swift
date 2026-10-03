@@ -39,7 +39,7 @@ enum WallpaperTransitionError: LocalizedError {
         case .notReady:
             return "The new wallpaper did not become ready. The previous wallpaper was restored."
         case .recoveryFailed:
-            return "macOS has not restored the desktop yet. Sunpaper is keeping the previous picture visible. Keep Sunpaper open and retry restoration in Settings → Smooth changes."
+            return "macOS has not restored the desktop yet. Sunpaper is keeping the previous picture visible. Keep Sunpaper open and choose Retry."
         case .uncoveredRecoveryFailed:
             return "The wallpaper change failed and its previous configuration couldn’t be restored. Try again, or choose a wallpaper in macOS Wallpaper settings."
         }
@@ -170,8 +170,34 @@ enum WallpaperTransitionTransaction {
     }
 }
 
+/// Covers fit only the display layout they were captured for. After a display
+/// change they no longer hide the desktop and can never be verified against
+/// it, so recovery removes them and restores like an uncovered change instead
+/// of retaining them forever.
 @MainActor
-final class WallpaperTransition: ObservableObject {
+enum WallpaperCoverRecovery {
+    static func perform(layoutMatches: Bool,
+                        removeCovers: () -> Void,
+                        restore: () async throws -> Void,
+                        verifiedRestore: () async throws -> Void) async throws {
+        guard layoutMatches else {
+            removeCovers()
+            try await restore()
+            return
+        }
+        try await verifiedRestore()
+    }
+}
+
+/// A failed recovery blocks every later change until restoration succeeds.
+@MainActor
+protocol WallpaperRecovering: AnyObject {
+    var needsRecovery: Bool { get }
+    func retryRecovery() async
+}
+
+@MainActor
+final class WallpaperTransition: ObservableObject, WallpaperRecovering {
     static let shared = WallpaperTransition()
     @Published private(set) var needsRecovery = false
     @Published private(set) var recoveryError: String?
@@ -304,13 +330,19 @@ final class WallpaperTransition: ObservableObject {
         // Once visible, every error path must either reveal a verified desktop or
         // retain the covers. Never defer an unconditional close over a mutation.
         let recovery: @MainActor () async throws -> Void = { [self, covers] in
-            for cover in covers { cover.show(cover.original) }
-            CATransaction.flush()
-            let originals = Dictionary(uniqueKeysWithValues: covers.map {
-                ($0.desktop.id, [WallpaperFrameSignature(image: $0.original)])
-            })
-            let images = try await observeReload(covers: covers, expected: originals, change: restore)
-            try await reveal(covers: covers, images: images, expected: originals)
+            try await WallpaperCoverRecovery.perform(
+                layoutMatches: layoutMatches(covers),
+                removeCovers: { for cover in covers { cover.orderOut(nil); cover.close() } },
+                restore: restore
+            ) {
+                for cover in covers { cover.show(cover.original) }
+                CATransaction.flush()
+                let originals = Dictionary(uniqueKeysWithValues: covers.map {
+                    ($0.desktop.id, [WallpaperFrameSignature(image: $0.original)])
+                })
+                let images = try await observeReload(covers: covers, expected: originals, change: restore)
+                try await reveal(covers: covers, images: images, expected: originals)
+            }
         }
         var replacementImages: [CGDirectDisplayID: CGImage] = [:]
         do {
@@ -320,8 +352,8 @@ final class WallpaperTransition: ObservableObject {
                 try await reveal(covers: covers, images: replacementImages, expected: expected)
             }, recover: recovery)
         } catch WallpaperTransitionError.recoveryFailed {
-            // No polling loop left running. The explicit Settings retry owns the
-            // next attempt, with the exact pre-change configuration retained.
+            // No polling loop left running. An explicit Retry or a settled display
+            // change owns the next attempt, with the exact pre-change configuration retained.
             retainCovers = true
             retainedRecovery = recovery
             needsRecovery = true
@@ -373,6 +405,10 @@ final class WallpaperTransition: ObservableObject {
                 screen.frame == cover.frame
             }
         }) else { throw WallpaperTransitionError.unavailableDesktop }
+    }
+
+    private func layoutMatches(_ covers: [Cover]) -> Bool {
+        (try? validateLayout(covers)) != nil
     }
 
     private func capture(_ window: SCWindow, scale: CGFloat = 1) async throws -> CGImage {

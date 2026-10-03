@@ -21,6 +21,8 @@ final class SunpaperController: ObservableObject {
     private let now: () -> Date
     private var observation: AnyCancellable?
     private var displayObservation: NSObjectProtocol?
+    private var displayChangeTask: Task<Void, Never>?
+    private let recovery: WallpaperRecovering
     private var started = false
     private final class LocationBox { var coordinate: CLLocationCoordinate2D? }
     private let location: LocationBox
@@ -29,6 +31,7 @@ final class SunpaperController: ObservableObject {
          defaults: UserDefaults? = .standard,
          dependencies: SlotSchedulerDependencies? = nil,
          displays: [DisplayManager.Display]? = nil,
+         recovery: WallpaperRecovering? = nil,
          now: @escaping () -> Date = Date.init) {
         let storedData = defaults?.data(forKey: WallpaperConfig.userDefaultsKey)
         let decodedConfig = storedData.flatMap { WallpaperConfig.decodeCompatible(from: $0) }
@@ -42,6 +45,7 @@ final class SunpaperController: ObservableObject {
         self.config = config
         self.defaults = defaults
         self.hasNewerStoredSchema = hasNewerStoredSchema
+        self.recovery = recovery ?? WallpaperTransition.shared
         self.now = now
         self.displays = displays ?? DisplayManager.shared.getDisplays()
         let location = LocationBox()
@@ -66,13 +70,43 @@ final class SunpaperController: ObservableObject {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.displays = DisplayManager.shared.getDisplays()
-                self.scheduler.forceUpdate()
+                // Wake and reconnection post several changes while macOS settles
+                // the layout. A covered change started mid-way can't be verified.
+                self.displayChangeTask?.cancel()
+                self.displayChangeTask = Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: Self.displaySettleDelay)
+                    guard !Task.isCancelled else { return }
+                    await self?.displayLayoutDidSettle()
+                }
             }
         }
     }
 
+    static let displaySettleDelay: Duration = .seconds(2)
+
+    /// Covers retained for a layout that no longer exists can only be removed
+    /// by restoring, so try that once before reconciling the schedule.
+    func displayLayoutDidSettle() async {
+        guard started else { return }
+        if recovery.needsRecovery { await recovery.retryRecovery() }
+        guard started else { return }
+        scheduler.forceUpdate()
+    }
+
+    /// A retained cover blocks every change until restoration succeeds, so
+    /// Retry restores the desktop first instead of failing on the same guard.
+    func retryWallpaperChange() async {
+        if recovery.needsRecovery {
+            await recovery.retryRecovery()
+            guard !recovery.needsRecovery else { return }
+        }
+        scheduler.retryLastApplication()
+    }
+
     func stop() {
         started = false
+        displayChangeTask?.cancel()
+        displayChangeTask = nil
         scheduler.stop()
         if let displayObservation { NotificationCenter.default.removeObserver(displayObservation) }
         displayObservation = nil

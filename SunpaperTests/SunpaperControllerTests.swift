@@ -425,6 +425,52 @@ final class SunpaperControllerTests: XCTestCase {
         XCTAssertEqual(controller.scheduler.playbackMode, .paused)
     }
 
+    func testRetryRestoresRetainedCoverBeforeRetryingChange() async {
+        let service = ControllerWallpaperFake()
+        let recovery = ControllerRecoveryFake(needsRecovery: true, restores: true)
+        let controller = makeController(config: WallpaperConfig(slots: [slot("Morning", hour: 8)]), service: service, recovery: recovery)
+        controller.start()
+        defer { controller.stop() }
+        await controller.scheduler.waitForPendingApplication()
+        XCTAssertEqual(service.applications.count, 1)
+
+        await controller.retryWallpaperChange()
+        await controller.scheduler.waitForPendingApplication()
+        XCTAssertEqual(recovery.attempts, 1)
+        XCTAssertFalse(recovery.needsRecovery)
+        XCTAssertEqual(service.applications.count, 2)
+    }
+
+    func testRetryDoesNotChangeWallpaperWhileRestorationStillFails() async {
+        let service = ControllerWallpaperFake()
+        let recovery = ControllerRecoveryFake(needsRecovery: true, restores: false)
+        let controller = makeController(config: WallpaperConfig(slots: [slot("Morning", hour: 8)]), service: service, recovery: recovery)
+        controller.start()
+        defer { controller.stop() }
+        await controller.scheduler.waitForPendingApplication()
+
+        await controller.retryWallpaperChange()
+        await controller.scheduler.waitForPendingApplication()
+        XCTAssertEqual(recovery.attempts, 1)
+        XCTAssertEqual(service.applications.count, 1)
+    }
+
+    func testSettledDisplayChangeRestoresRetainedCoverThenReconciles() async {
+        let service = ControllerWallpaperFake()
+        let recovery = ControllerRecoveryFake(needsRecovery: true, restores: true)
+        let controller = makeController(config: WallpaperConfig(slots: [slot("Morning", hour: 8)]), service: service, recovery: recovery)
+        await controller.displayLayoutDidSettle()
+        XCTAssertEqual(recovery.attempts, 0, "An inert controller must not restore")
+
+        controller.start()
+        defer { controller.stop() }
+        await controller.scheduler.waitForPendingApplication()
+        await controller.displayLayoutDidSettle()
+        await controller.scheduler.waitForPendingApplication()
+        XCTAssertEqual(recovery.attempts, 1)
+        XCTAssertEqual(service.applications.count, 2)
+    }
+
     private func sampleConfig() -> WallpaperConfig {
         WallpaperConfig(
             slots: [slot("Global", hour: 7)], isFollowingSchedule: false,
@@ -473,6 +519,7 @@ final class SunpaperControllerTests: XCTestCase {
         config: WallpaperConfig? = nil,
         defaults: UserDefaults? = nil,
         service: ControllerWallpaperFake? = nil,
+        recovery: WallpaperRecovering? = nil,
         now: Date? = nil
     ) -> SunpaperController {
         let service = service ?? ControllerWallpaperFake()
@@ -486,7 +533,8 @@ final class SunpaperControllerTests: XCTestCase {
             displayProvider: ControllerDisplayFake(displays: displays),
             aerialCatalog: ControllerCatalogFake()
         )
-        return SunpaperController(config: config, defaults: defaults, dependencies: dependencies, displays: displays, now: { date })
+        return SunpaperController(config: config, defaults: defaults, dependencies: dependencies, displays: displays,
+                                  recovery: recovery ?? ControllerRecoveryFake(needsRecovery: false, restores: true), now: { date })
     }
 
     private static func date(hour: Int) -> Date {
@@ -511,6 +559,23 @@ private final class ControllerWallpaperFake: SlotSchedulerWallpaperServicing {
         applications.append((.custom(path: path), displayUUID))
     }
     nonisolated func getCurrentAssetID() throws -> String? { nil }
+}
+
+@MainActor
+private final class ControllerRecoveryFake: WallpaperRecovering {
+    private(set) var needsRecovery: Bool
+    private(set) var attempts = 0
+    private let restores: Bool
+
+    init(needsRecovery: Bool, restores: Bool) {
+        self.needsRecovery = needsRecovery
+        self.restores = restores
+    }
+
+    func retryRecovery() async {
+        attempts += 1
+        if restores { needsRecovery = false }
+    }
 }
 
 private struct ControllerDisplayFake: SlotSchedulerDisplayProviding {

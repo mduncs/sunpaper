@@ -30,7 +30,7 @@ struct ScheduleView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     todayCard
                     if let error = controller.scheduler.lastError {
-                        InlineNotice(text: error, actionTitle: "Retry") { controller.scheduler.retryLastApplication() }
+                        InlineNotice(text: error, actionTitle: "Retry") { Task { await controller.retryWallpaperChange() } }
                     } else if controller.needsLocation {
                         InlineNotice(text: "Choose a location for sunrise and sunset. You can also use fixed times.", actionTitle: "Choose…") { showLocation = true }
                     }
