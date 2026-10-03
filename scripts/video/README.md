@@ -20,9 +20,10 @@ source in the list at the end), or *unknown*.
 
 Apple's engine plays aerials on the lock screen and in the screen saver, then
 slows them to a still frame when you unlock. No setting, defaults key, or
-`Index.plist` field changes that (*verified*). Playing by default on the
-desktop therefore means Sunpaper drives desktop playback itself. The
-recommended design is a hybrid; see [section 4](#4-playing-on-the-desktop).
+`Index.plist` field changes that (*verified*). Issue #2 asks for a real
+wallpaper, not an overlay window, and the only way to get one that keeps
+playing on the desktop is our own wallpaper extension. See the
+[recommendation](#recommendation) in section 4.
 
 ## 1. How macOS plays aerials
 
@@ -247,18 +248,28 @@ down to a still layer. Nothing switches that off (*verified*):
 | Desktop-level video window, like Plash | No | Yes | No | None beyond power use | Low to medium |
 | Hybrid: catalog entry (route B) plus the window, like Backdrop 2 and Wallper | Yes on the lock screen | Yes | Yes | The catalog half relies on undocumented defaults | Medium |
 
-**Recommendation: the hybrid.** Sunpaper already selects aerials by ID and
-already runs desktop-level windows for smooth changes. Desktop playback stays
-on public API, and the catalog half fails safe: if Apple drops the override
-keys, the window still plays and the lock screen falls back to a stock aerial.
-Build the extension only if we accept a private framework.
-
 An extension decides for itself what to do in `default` mode, which is how
 Phosphene keeps playing (*reported*). The extension point declares a private
 entitlement that Apple's own aerials extension doesn't carry and that
 reportedly isn't enforced on 27.0.
 
-### Desktop window design notes
+### Recommendation
+
+Issue #2 asks for a real wallpaper rather than an overlay window, so only the
+extension meets it fully. Work toward it in steps, each useful on its own:
+
+1. **Spike route B.** Low effort and reversible. It proves the encode on 27.2
+   and gives a real custom wallpaper that plays on the lock screen and rests
+   on a still on the desktop. Sunpaper can schedule it by ID like any aerial.
+2. **Spike a wallpaper extension**, using Phosphene as the reference. This is
+   the only real wallpaper that keeps playing on the desktop. Check Developer
+   ID signing first, since it decides whether the route is shippable.
+3. **Fall back to the hybrid** if the extension proves too fragile: the
+   route B entry for the lock screen plus a desktop-level window. Desktop
+   playback then stays on public API, and if Apple drops the override keys the
+   window still plays.
+
+### Desktop window design notes (hybrid fallback)
 
 - One borderless, click-through, non-activating window per display at
   `kCGDesktopWindowLevel`, showing an `AVPlayerLayer` that loops with
@@ -275,7 +286,7 @@ reportedly isn't enforced on 27.0.
 - The window plays any H.264 or HEVC file. Only the catalog copy needs the
   special encode.
 
-### Sunpaper changes for the catalog half
+### Sunpaper changes for a catalog entry (route B)
 
 - `AerialCatalog` reads `aerials/manifest/entries.json` directly. It must
   follow `AerialManifestLocalPathOverride` when that is set.
