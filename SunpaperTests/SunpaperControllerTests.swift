@@ -540,6 +540,141 @@ final class SunpaperControllerTests: XCTestCase {
         XCTAssertTrue(service.applications.isEmpty)
     }
 
+    func testInactiveSolarRowsDoNotRequireLocationOrMisstateStatus() {
+        var disabled = TimeSlot(name: "Disabled solar", trigger: .sunrise(), source: .builtIn(assetID: "sunrise"))
+        disabled.isEnabled = false
+        let unassigned = TimeSlot(name: "Unassigned solar", trigger: .sunset(), source: .none)
+        let controller = makeController(config: WallpaperConfig(slots: [slot("Fixed", hour: 8), disabled, unassigned]))
+        XCTAssertFalse(controller.needsLocation)
+        XCTAssertEqual(controller.stateTitle, "Following schedule")
+    }
+
+    func testRetryStatusToneAgreesWithBusyTitleDespitePreviousError() async {
+        let service = ControllerWallpaperFake()
+        service.shouldFail = true
+        let controller = makeController(config: WallpaperConfig(slots: [slot("Morning", hour: 8)]), service: service)
+        controller.start()
+        defer { controller.stop() }
+        await controller.scheduler.waitForPendingApplication()
+        XCTAssertNotNil(controller.scheduler.lastError)
+        XCTAssertEqual(controller.statusTone, .attention)
+
+        service.shouldFail = false
+        controller.scheduler.retryLastApplication()
+        XCTAssertTrue(controller.scheduler.isApplying)
+        XCTAssertEqual(controller.stateTitle, "Changing wallpaper…")
+        XCTAssertEqual(controller.statusTone, .busy)
+        await controller.scheduler.waitForPendingApplication()
+        XCTAssertEqual(controller.statusTone, .following)
+    }
+
+    func testDayRibbonIncludesSolarChangesFromAdjacentAnchorDays() throws {
+        var config = WallpaperConfig(slots: [
+            slot("Noon", hour: 12),
+            TimeSlot(name: "Early sunrise", trigger: .sunrise(offset: -6 * 3600), source: .builtIn(assetID: "early")),
+            TimeSlot(name: "Late sunset", trigger: .sunset(offset: 6 * 3600), source: .builtIn(assetID: "late"))
+        ], isFollowingSchedule: false)
+        config.latitude = 41.8781
+        config.longitude = -87.6298
+        let controller = makeController(config: config)
+        let day = try XCTUnwrap(Calendar.current.dateInterval(of: .day, for: controller.currentDate))
+        let yesterday = try XCTUnwrap(Calendar.current.date(byAdding: .day, value: -1, to: controller.currentDate))
+        let tomorrow = try XCTUnwrap(Calendar.current.date(byAdding: .day, value: 1, to: controller.currentDate))
+        // Choose offsets dynamically so this fixture also works in other time zones.
+        let sunrise = try XCTUnwrap(controller.resolvedTime(for: .sunrise()))
+        let sunset = try XCTUnwrap(controller.resolvedTime(for: .sunset()))
+        config.slots[1].trigger = .sunrise(offset: day.start.timeIntervalSince(sunrise) - 3600)
+        config.slots[2].trigger = .sunset(offset: day.end.timeIntervalSince(sunset) + 3600)
+        let adjusted = makeController(config: config)
+        let earlyToday = try XCTUnwrap(adjusted.resolvedTime(for: config.slots[1].trigger, on: tomorrow))
+        let lateToday = try XCTUnwrap(adjusted.resolvedTime(for: config.slots[2].trigger, on: yesterday))
+        XCTAssertTrue(day.contains(earlyToday))
+        XCTAssertTrue(day.contains(lateToday))
+        let model = DayRibbonModel(controller: adjusted)
+        XCTAssertEqual(model.segments.map(\.source), [.builtIn(assetID: "early"), .builtIn(assetID: "late"), config.slots[0].source, .builtIn(assetID: "early")])
+        XCTAssertEqual(try XCTUnwrap(model.segments.last).start, earlyToday.timeIntervalSince(day.start) / day.duration, accuracy: 0.000001)
+        XCTAssertEqual(model.now, controller.currentDate.timeIntervalSince(day.start) / day.duration, accuracy: 0.000001)
+        XCTAssertTrue(model.summary.contains("Early sunrise"))
+        XCTAssertTrue(model.summary.contains("Late sunset"))
+
+        let beforeLate = makeController(config: config, now: lateToday.addingTimeInterval(-60))
+        XCTAssertEqual(beforeLate.nextChange?.date, lateToday)
+        let afterEarly = makeController(config: config, now: earlyToday.addingTimeInterval(60))
+        XCTAssertEqual(afterEarly.expectedSlot?.id, config.slots[1].id)
+    }
+
+    func testDayRibbonRetainsOneMinuteWallpaperSegments() throws {
+        let first = slot("First", hour: 12)
+        let second = TimeSlot(name: "Second", trigger: .fixed(hour: 12, minute: 1), source: .builtIn(assetID: "second"))
+        let controller = makeController(config: WallpaperConfig(slots: [first, second], isFollowingSchedule: false))
+        let model = DayRibbonModel(controller: controller)
+        let brief = try XCTUnwrap(model.segments.first { $0.source == first.source })
+        XCTAssertEqual(brief.start, 0.5, accuracy: 0.000001)
+        XCTAssertEqual(brief.length, 1.0 / 1440, accuracy: 0.000001)
+        XCTAssertEqual(model.segments.map(\.source), [second.source, first.source, second.source])
+    }
+
+    func testConcurrentAppLaunchesElectOneInstanceInsteadOfBothQuitting() {
+        let date = Self.date(hour: 12)
+        let processes: [(Int32, Date)] = [(100, date), (101, date)]
+        XCTAssertTrue(AppDelegate.shouldStart(processIdentifier: 100, runningProcesses: processes))
+        XCTAssertFalse(AppDelegate.shouldStart(processIdentifier: 101, runningProcesses: processes))
+        XCTAssertTrue(AppDelegate.shouldStart(processIdentifier: 101, runningProcesses: [(101, date)]))
+        // PIDs can wrap: a later launch with a smaller PID must still exit.
+        let wrapped: [(Int32, Date)] = [(100, date), (1, date.addingTimeInterval(1))]
+        XCTAssertTrue(AppDelegate.shouldStart(processIdentifier: 100, runningProcesses: wrapped))
+        XCTAssertFalse(AppDelegate.shouldStart(processIdentifier: 1, runningProcesses: wrapped))
+    }
+
+    func testCancelledLocationManagerCannotFinishANewerRequest() async {
+        let old = ControllerLocationManagerFake()
+        let current = ControllerLocationManagerFake()
+        var managers = [old, current]
+        let search = LocationSearchModel(makeManager: { managers.removeFirst() })
+        search.findCurrentLocation()
+        search.findCurrentLocation()
+        let originalResults = search.results.map(\.id)
+        let location = CLLocation(latitude: 1, longitude: 2)
+
+        // Delegate callbacks can already be queued when cancellation detaches
+        // the old manager. They must not consume the newer request's state.
+        search.locationManager(old, didUpdateLocations: [location])
+        await Task.yield()
+        XCTAssertTrue(search.locating)
+        XCTAssertEqual(search.results.map(\.id), originalResults)
+
+        search.locationManager(old, didFailWithError: NSError(domain: "test", code: 1))
+        await Task.yield()
+        XCTAssertTrue(search.locating)
+        XCTAssertNil(search.error)
+
+        search.locationManager(current, didUpdateLocations: [location])
+        await Task.yield()
+        XCTAssertFalse(search.locating)
+        XCTAssertEqual(search.results.first?.latitude, 1)
+        search.cancel()
+    }
+
+    func testExpectedSlotUsesTheSameTieOrderAsTheAppliedSchedule() async {
+        let first = slot("First", hour: 8)
+        let second = slot("Second", hour: 8)
+        let controller = makeController(config: WallpaperConfig(slots: [first, second]))
+        controller.start()
+        defer { controller.stop() }
+        await controller.scheduler.waitForPendingApplication()
+        XCTAssertEqual(controller.shownSource, second.source)
+        XCTAssertEqual(controller.expectedSlot?.id, second.id)
+    }
+
+    func testPickerRejectsSingleFrameGIFThatWallpaperServiceCannotApply() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("SunpaperPicker-\(UUID().uuidString).gif")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let data = try XCTUnwrap(Data(base64Encoded: "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"))
+        try data.write(to: url)
+        XCTAssertThrowsError(try WallpaperService.shared.validateCustomWallpaper(path: url.path))
+        XCTAssertNil(WallpaperGridPicker.validatedImage(at: url))
+    }
+
     private func slot(_ name: String, hour: Int) -> TimeSlot {
         TimeSlot(name: name, trigger: .fixed(hour: hour, minute: 0), source: .builtIn(assetID: name))
     }
@@ -575,10 +710,12 @@ final class SunpaperControllerTests: XCTestCase {
 private final class ControllerWallpaperFake: SlotSchedulerWallpaperServicing {
     var applications: [(source: WallpaperSource, displayUUID: String?)] = []
     var downloadCount = 0
+    var shouldFail = false
 
     func downloadAerial(assetID: String, from url: URL) async throws { downloadCount += 1 }
     nonisolated func isAerialDownloaded(assetID: String) -> Bool { true }
     func setWallpaper(assetID: String, displayUUID: String?) async throws {
+        if shouldFail { throw WallpaperError.aerialNotDownloaded(assetID: assetID) }
         applications.append((.builtIn(assetID: assetID), displayUUID))
     }
     func setCustomWallpaper(path: String) throws {
@@ -630,4 +767,10 @@ private struct ControllerWakeFake: SlotSchedulerWakeObserving {
 
 private struct ControllerCatalogFake: SlotSchedulerAerialCatalogResolving {
     func downloadURL(for assetID: String) -> URL? { nil }
+}
+
+private final class ControllerLocationManagerFake: CLLocationManager {
+    override var authorizationStatus: CLAuthorizationStatus { .authorizedAlways }
+    override func requestLocation() {}
+    override func stopUpdatingLocation() {}
 }

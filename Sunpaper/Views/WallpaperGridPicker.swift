@@ -401,7 +401,7 @@ struct WallpaperGridPicker: View {
         panel.message = "Choose a still image to preview before confirming."
         guard panel.runModal() == .OK, let url = panel.url else { return }
         // Validate and preview now; no persistent copy or binding mutation until confirmation.
-        guard let image = validatedImage(at: url) else {
+        guard let image = Self.validatedImage(at: url) else {
             customFileError = "This file could not be read as a still image. Choose a JPEG, PNG, or HEIC image."
             return
         }
@@ -412,8 +412,9 @@ struct WallpaperGridPicker: View {
         draftSource = .custom(path: url.path)
     }
 
-    private func validatedImage(at url: URL) -> NSImage? {
-        guard let type = UTType(filenameExtension: url.pathExtension), type.conforms(to: .image),
+    static func validatedImage(at url: URL) -> NSImage? {
+        guard (try? WallpaperService.shared.validateCustomWallpaper(path: url.path)) != nil,
+              let type = UTType(filenameExtension: url.pathExtension), type.conforms(to: .image),
               let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
               CGImageSourceGetCount(imageSource) == 1 else { return nil }
         let options: [CFString: Any] = [
@@ -428,7 +429,7 @@ struct WallpaperGridPicker: View {
     }
 
     private func loadCustomPreview(at url: URL) {
-        customPreview = validatedImage(at: url)
+        customPreview = Self.validatedImage(at: url)
         customPath = customPreview == nil ? nil : url.path
         if customPreview == nil {
             customFileError = "This image is unavailable. Choose another image to continue."

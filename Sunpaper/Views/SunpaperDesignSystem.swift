@@ -142,8 +142,8 @@ enum SunpaperStatusTone {
 
 extension SunpaperController {
     var statusTone: SunpaperStatusTone {
-        if scheduler.lastError != nil { return .attention }
         if scheduler.isDownloading || scheduler.isApplying { return .busy }
+        if scheduler.lastError != nil { return .attention }
         switch scheduler.playbackMode {
         case .paused: return .paused
         case .temporary: return .temporary
@@ -187,7 +187,11 @@ struct AmbientBackdrop: View {
             LinearGradient(colors: [.black.opacity(0.22), .black.opacity(0.52)], startPoint: .top, endPoint: .bottom)
         }
         .clipped()
-        .task(id: source) { image = await AmbientImage.blurred(for: source) }
+        .task(id: source) {
+            let loaded = await AmbientImage.blurred(for: source)
+            guard !Task.isCancelled else { return }
+            image = loaded
+        }
         .accessibilityHidden(true)
     }
 }
@@ -328,7 +332,7 @@ struct DayRibbon: View {
 }
 
 @MainActor
-private struct DayRibbonModel {
+struct DayRibbonModel {
     struct Segment: Identifiable {
         let id: String
         let source: WallpaperSource
@@ -351,19 +355,26 @@ private struct DayRibbonModel {
         func fraction(_ time: Date) -> Double { min(max(time.timeIntervalSince(day.start) / day.duration, 0), 1) }
         func text(_ time: Date?) -> String { time?.formatted(date: .omitted, time: .shortened) ?? "" }
 
-        let marks = controller.slots.filter { $0.isEnabled && $0.source != .none }
-            .compactMap { slot in controller.resolvedTime(for: slot.trigger, on: date).map { (slot: slot, time: $0) } }
+        // Solar offsets can move a change into an adjacent calendar day. Resolve
+        // those anchor days too, and use the actual preceding change at midnight.
+        let marks = [-1, 0, 1].flatMap { offset -> [(slot: TimeSlot, time: Date)] in
+            guard let anchorDay = Calendar.current.date(byAdding: .day, value: offset, to: date) else { return [] }
+            return controller.slots.filter { $0.isEnabled && $0.source != .none }
+                .compactMap { slot in controller.resolvedTime(for: slot.trigger, on: anchorDay).map { (slot: slot, time: $0) } }
+        }
             .sorted { $0.time < $1.time }
+        let todayMarks = marks.filter { $0.time >= day.start && $0.time < day.end }
         var segments: [Segment] = []
-        if let first = marks.first, let last = marks.last, fraction(first.time) > 0 {
-            segments.append(Segment(id: "overnight", source: last.slot.source, start: 0, length: fraction(first.time)))
+        if let previous = marks.last(where: { $0.time <= day.start }) {
+            let end = todayMarks.first.map { fraction($0.time) } ?? 1
+            segments.append(Segment(id: "overnight", source: previous.slot.source, start: 0, length: end))
         }
-        for (index, mark) in marks.enumerated() {
+        for (index, mark) in todayMarks.enumerated() {
             let start = fraction(mark.time)
-            let end = index + 1 < marks.count ? fraction(marks[index + 1].time) : 1
-            segments.append(Segment(id: mark.slot.id.uuidString, source: mark.slot.source, start: start, length: end - start))
+            let end = index + 1 < todayMarks.count ? fraction(todayMarks[index + 1].time) : 1
+            segments.append(Segment(id: "\(mark.slot.id)-\(mark.time.timeIntervalSince1970)", source: mark.slot.source, start: start, length: end - start))
         }
-        self.segments = segments.filter { $0.length > 0.001 }
+        self.segments = segments.filter { $0.length > 0 }
 
         let sunriseTime = controller.resolvedTime(for: .sunrise(), on: date)
         let sunsetTime = controller.resolvedTime(for: .sunset(), on: date)
@@ -373,9 +384,9 @@ private struct DayRibbonModel {
         nowText = text(date)
         sunriseText = text(sunriseTime)
         sunsetText = text(sunsetTime)
-        summary = marks.isEmpty
+        summary = todayMarks.isEmpty
             ? "No timed changes today"
-            : marks.map { "\($0.slot.name) at \(text($0.time))" }.joined(separator: ", ")
+            : todayMarks.map { "\($0.slot.name) at \(text($0.time))" }.joined(separator: ", ")
     }
 }
 

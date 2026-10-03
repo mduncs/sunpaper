@@ -267,9 +267,13 @@ final class WallpaperTransition: ObservableObject, WallpaperRecovering {
 
     static var hasCapturePermission: Bool { CGPreflightScreenCaptureAccess() }
 
+    /// Marks the instance started by Quit & Reopen, so it waits for this one to exit.
+    static let relaunchArgument = "--sunpaper-relaunched"
+
     static func relaunchApp() {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.createsNewApplicationInstance = true
+        configuration.arguments = [relaunchArgument]
         NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { application, error in
             guard application != nil, error == nil else { return }
             Task { @MainActor in NSApp.terminate(nil) }

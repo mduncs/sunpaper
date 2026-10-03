@@ -303,6 +303,12 @@ final class LocationSearchModel: NSObject, ObservableObject, CLLocationManagerDe
     private var task: Task<Void, Never>?
     private var geocoder = CLGeocoder()
     private var manager: CLLocationManager?
+    private let makeManager: () -> CLLocationManager
+
+    init(makeManager: @escaping () -> CLLocationManager = CLLocationManager.init) {
+        self.makeManager = makeManager
+        super.init()
+    }
 
     func search() {
         task?.cancel(); geocoder.cancelGeocode()
@@ -330,7 +336,7 @@ final class LocationSearchModel: NSObject, ObservableObject, CLLocationManagerDe
 
     func findCurrentLocation() {
         cancel(); error = nil; locating = true
-        let manager = CLLocationManager()
+        let manager = makeManager()
         self.manager = manager
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyKilometer
@@ -358,12 +364,15 @@ final class LocationSearchModel: NSObject, ObservableObject, CLLocationManagerDe
 
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         let status = manager.authorizationStatus
-        Task { @MainActor [weak self] in self?.handleAuthorization(status) }
+        Task { @MainActor [weak self] in
+            guard let self, self.manager === manager else { return }
+            self.handleAuthorization(status)
+        }
     }
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
         Task { @MainActor [weak self] in
-            guard let self, self.locating else { return }
+            guard let self, self.locating, self.manager === manager else { return }
             self.locating = false
             self.manager?.stopUpdatingLocation()
             self.results = [LocationChoice(name: "Current location", detail: "\(location.coordinate.latitude.formatted(.number.precision(.fractionLength(2)))), \(location.coordinate.longitude.formatted(.number.precision(.fractionLength(2))))", latitude: location.coordinate.latitude, longitude: location.coordinate.longitude)]
@@ -371,7 +380,7 @@ final class LocationSearchModel: NSObject, ObservableObject, CLLocationManagerDe
     }
     nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         Task { @MainActor [weak self] in
-            guard let self, self.locating else { return }
+            guard let self, self.locating, self.manager === manager else { return }
             self.locating = false
             self.error = "Couldn’t get your location. You can search for a city instead."
         }

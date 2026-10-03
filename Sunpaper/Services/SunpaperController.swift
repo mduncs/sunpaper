@@ -134,6 +134,7 @@ final class SunpaperController: ObservableObject {
 
     var needsLocation: Bool {
         location.coordinate == nil && slots.contains { slot in
+            guard slot.isEnabled, slot.source != .none else { return false }
             if case .solar = slot.trigger { return true }; return false
         }
     }
@@ -174,7 +175,7 @@ final class SunpaperController: ObservableObject {
                 resolvedTime(for: slot.trigger, on: date).map { (slot, $0) }
             }
         }
-        return candidates.filter { $0.1 <= today }.max(by: { $0.1 < $1.1 })?.0
+        return candidates.sorted { $0.1 < $1.1 }.last(where: { $0.1 <= today })?.0
     }
 
     var nextChange: (slot: TimeSlot, date: Date)? {

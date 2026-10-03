@@ -34,7 +34,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard NSClassFromString("XCTestCase") == nil,
               ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
         let running = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
-        guard running.count <= 1 else { NSApp.terminate(nil); return }
+        let ownIdentifier = ProcessInfo.processInfo.processIdentifier
+        if CommandLine.arguments.contains(WallpaperTransition.relaunchArgument) {
+            // Quit & Reopen: the previous instance quits once this one has
+            // launched. Wait for it instead of electing it and leaving none.
+            let previous = running.filter { $0.processIdentifier != ownIdentifier }
+            Task { @MainActor [weak self] in
+                var waits = 0
+                while previous.contains(where: { !$0.isTerminated }), waits < 50 {
+                    waits += 1
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
+                if previous.contains(where: { !$0.isTerminated }) { NSApp.terminate(nil) } else { self?.startApp() }
+            }
+            return
+        }
+        guard Self.shouldStart(processIdentifier: ownIdentifier,
+                               runningProcesses: running.map { ($0.processIdentifier, $0.launchDate ?? .distantPast) }) else { NSApp.terminate(nil); return }
+        startApp()
+    }
+
+    private func startApp() {
         setupStatusItem()
         controller.start()
         observation = controller.scheduler.$isDownloading.sink { [weak self] downloading in
@@ -42,6 +62,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 systemSymbolName: downloading ? "icloud.and.arrow.down.fill" : "sun.horizon.fill",
                 accessibilityDescription: downloading ? "Sunpaper is downloading a wallpaper" : "Sunpaper")
         }
+    }
+
+    static func shouldStart(processIdentifier: Int32, runningProcesses: [(identifier: Int32, launchDate: Date)]) -> Bool {
+        // Simultaneous launches must elect one survivor rather than both exit.
+        guard let first = runningProcesses.min(by: {
+            ($0.launchDate, $0.identifier) < ($1.launchDate, $1.identifier)
+        }) else { return true }
+        return first.identifier == processIdentifier
     }
 
     private func setupStatusItem() {
