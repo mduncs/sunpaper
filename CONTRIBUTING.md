@@ -82,6 +82,8 @@ Verified live on macOS 27 (October 2026), and modelled in
 - WallpaperAgent then derives `Spaces.<space>` entries from `Displays`. Those
   win afterwards, so a per-display change drops the Spaces that reference its
   display.
+- Not yet verified: whether a Space's `Default` or its `Displays` entry wins,
+  and layouts where Spaces span displays ("Displays have separate Spaces" off).
 
 Sunpaper writes whole entries (`{Type: linked, Linked: {Content, LastSet,
 LastUse}}`) so a missing parent key can't fail a change. Leaving all-displays

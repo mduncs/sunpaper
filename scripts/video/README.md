@@ -296,8 +296,14 @@ extension meets it fully. Work toward it in steps, each useful on its own:
 - `downloadAerial` skips files that already exist. `redownloadAerial` rejects
   a non-HTTP response before touching the file, so a `file://` entry keeps its
   copy.
+- macOS may purge the video while it is unselected (see the next section). Keep
+  the master copy in Sunpaper's own Application Support folder, and restore it
+  into `videos/` with an APFS clone (`cp -c`, instant and space-sharing) before
+  each selection. A missing custom video then means "restore", not "download".
 - Custom imports accept still images only today, so videos need a new import
   path.
+- Selecting by ID writes a `linked` entry, which serves the desktop, lock
+  screen and screen saver. The lock screen has no slot of its own (*reported*).
 
 ## 5. Persistence risks
 
@@ -305,7 +311,7 @@ extension meets it fully. Work toward it in steps, each useful on its own:
 | --- | --- |
 | Apple publishes a new catalog, replacing `manifest/entries.json` | In-place catalog edits |
 | Apple changes an asset's URL, so the in-use video is re-downloaded | Route A |
-| Unselected videos are marked purgeable, and CacheDelete removes them under disk pressure (*verified* for Apple's videos; custom files *unknown*). Re-downloading a `file://` URL probably fails | Routes A and B |
+| Unselected videos are purged when free space runs low. On 2026-10-03 a near-low-disk event on this Mac removed every aerial video except the selected one (*verified* by log timing). The extension and WallpaperAgent flag videos as APFS-purgeable, and the `deleted` daemon removes flagged files. Whether custom videos get flagged is *unknown*; once purged, re-downloading a `file://` URL fails. Keep a master copy elsewhere | Routes A and B |
 | A macOS update replaces the bundled catalog and may restore Apple's videos (*reported*) | Routes A and B |
 | The override keys are undocumented and may disappear | Route B |
 | `Index.plist` migration resets unknown asset IDs ("Resetting aerial ID to default during migration"; when it triggers is *unknown*) | Route B |
