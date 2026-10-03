@@ -805,6 +805,53 @@ final class SchedulerTests: XCTestCase {
         scheduler.stop()
     }
 
+    func testVerificationRepairsDriftOnOneDisplayInPerDisplayMode() async {
+        let displays = [
+            DisplayManager.Display(uuid: "first", name: "First", isPrimary: true),
+            DisplayManager.Display(uuid: "second", name: "Second", isPrimary: false)
+        ]
+        let config = WallpaperConfig(slots: [], displayMode: .perDisplay, perDisplayConfigs: [
+            DisplayConfig(displayUUID: "first", slots: [runtimeSlot("first scene", hour: 8)]),
+            DisplayConfig(displayUUID: "second", slots: [runtimeSlot("second scene", hour: 8)])
+        ])
+        let service = ControlledWallpaperService()
+        let timers = TestTimerScheduler()
+        let scheduler = runtime(config: config, service: service, timers: timers, displays: displays)
+        scheduler.start()
+        await scheduler.waitForPendingApplication()
+        XCTAssertEqual(service.applied, ["first scene", "second scene"])
+
+        timers.tokens.first(where: \.repeats)?.fire()
+        await scheduler.waitForPendingApplication()
+        XCTAssertEqual(service.applied.count, 2, "Displays showing their scene need no repair")
+
+        service.currentAssetIDsByDisplay["second"] = "external"
+        timers.tokens.first(where: \.repeats)?.fire()
+        await scheduler.waitForPendingApplication()
+        XCTAssertEqual(Array(service.applied.dropFirst(2)), ["first scene", "second scene"])
+        scheduler.stop()
+    }
+
+    func testVerificationRepairsReplacedCustomImage() async {
+        let photo = TimeSlot(name: "Photo", trigger: .fixed(hour: 8, minute: 0), source: .custom(path: "/tmp/photo.heic"))
+        let service = ControlledWallpaperService()
+        let timers = TestTimerScheduler()
+        let scheduler = runtime(config: WallpaperConfig(slots: [photo]), service: service, timers: timers)
+        scheduler.start()
+        await scheduler.waitForPendingApplication()
+        XCTAssertEqual(service.customApplications.count, 1)
+
+        timers.tokens.first(where: \.repeats)?.fire()
+        await scheduler.waitForPendingApplication()
+        XCTAssertEqual(service.customApplications.count, 1, "A custom image still showing needs no repair")
+
+        service.showingCustomWallpaper = false
+        timers.tokens.first(where: \.repeats)?.fire()
+        await scheduler.waitForPendingApplication()
+        XCTAssertEqual(service.customApplications.count, 2)
+        scheduler.stop()
+    }
+
     func testDisablingSmoothingRetriesFailedAutomaticCapture() async {
         let service = ControlledWallpaperService()
         service.onApplyWithSmoothing = { _, smoothChanges in
@@ -1214,6 +1261,8 @@ private final class ControlledWallpaperService: SlotSchedulerWallpaperServicing 
     var appliedSmoothing: [Bool] = []
     var appliedDisplayUUIDs: [String?] = []
     var currentAssetID: String?
+    var currentAssetIDsByDisplay: [String: String] = [:]
+    var showingCustomWallpaper = true
     var customApplications: [(path: String, displayUUID: String?)] = []
     var onDownload: () async throws -> Void = {}
     var onApply: (String) async throws -> Void = { _ in }
@@ -1231,6 +1280,7 @@ private final class ControlledWallpaperService: SlotSchedulerWallpaperServicing 
         try await onApplyWithSmoothing(assetID, smoothChanges)
         try await onApply(assetID)
         currentAssetID = assetID
+        if let displayUUID { currentAssetIDsByDisplay[displayUUID] = assetID } else { currentAssetIDsByDisplay = [:] }
     }
     func setCustomWallpaper(path: String) throws {
         try setCustomWallpaper(path: path, displayUUID: nil)
@@ -1238,8 +1288,13 @@ private final class ControlledWallpaperService: SlotSchedulerWallpaperServicing 
     func setCustomWallpaper(path: String, displayUUID: String?) throws {
         customApplications.append((path, displayUUID))
         try onCustomApply(path, displayUUID)
+        showingCustomWallpaper = true
     }
     nonisolated func getCurrentAssetID() throws -> String? { MainActor.assumeIsolated { currentAssetID } }
+    nonisolated func getCurrentAssetID(displayUUID: String?) throws -> String? {
+        MainActor.assumeIsolated { displayUUID.flatMap { currentAssetIDsByDisplay[$0] } ?? currentAssetID }
+    }
+    func isShowingCustomWallpaper(path: String, displayUUID: String?) -> Bool { showingCustomWallpaper }
 }
 
 private struct DownloadableTestCatalog: SlotSchedulerAerialCatalogResolving {

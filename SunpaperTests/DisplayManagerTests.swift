@@ -242,7 +242,7 @@ final class DisplayManagerTests: XCTestCase {
             let uuid = display.uuid
 
             // UUID should match either "XXXXXXXX-XXXXXXXX-XXXXXXXX" or "display-XXXXXXXX" format
-            let vendorModelSerialPattern = "^[0-9A-F]{8}-[0-9A-F]{8}-[0-9A-F]{8}$"
+            let vendorModelSerialPattern = "^[0-9A-F]{8}-[0-9A-F]{8}-[0-9A-F]{8}(-[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12})?$"
             let displayIDPattern = "^display-[0-9A-F]{8}$"
 
             let vendorModelSerialRegex = try? NSRegularExpression(pattern: vendorModelSerialPattern)
@@ -277,6 +277,27 @@ final class DisplayManagerTests: XCTestCase {
         for (display1, display2) in zip(displays1, displays2) {
             XCTAssertEqual(display1.uuid, display2.uuid, "UUID should be stable across calls")
         }
+    }
+
+    func testIdenticalDisplaysWithoutSerialsGetDistinctIdentifiers() {
+        let twin = "00001E6D-00005B80-00000000"
+        let identifiers = DisplayManager.persistedIdentifiers(for: [
+            (id: 1, hardware: twin, native: "AAAAAAAA-0000-0000-0000-000000000001"),
+            (id: 2, hardware: twin, native: "BBBBBBBB-0000-0000-0000-000000000002"),
+            (id: 3, hardware: "00000610-0000A050-00000000", native: "CCCCCCCC-0000-0000-0000-000000000003")
+        ])
+
+        XCTAssertEqual(identifiers[1], "\(twin)-AAAAAAAA-0000-0000-0000-000000000001")
+        XCTAssertEqual(identifiers[2], "\(twin)-BBBBBBBB-0000-0000-0000-000000000002")
+        XCTAssertEqual(identifiers[3], "00000610-0000A050-00000000", "A unique display keeps its saved identifier")
+    }
+
+    func testSingleDisplayKeepsHardwareIdentifier() {
+        let identifiers = DisplayManager.persistedIdentifiers(for: [
+            (id: 1, hardware: "00001E6D-00005B80-00000000", native: "AAAAAAAA-0000-0000-0000-000000000001")
+        ])
+
+        XCTAssertEqual(identifiers[1], "00001E6D-00005B80-00000000")
     }
 
     // MARK: - Display Names

@@ -29,29 +29,156 @@ final class WallpaperServiceTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: temporary.path))
     }
 
-    func testIdleModeRecoveryWriteIsRequired() throws {
-        let data = try PropertyListSerialization.data(fromPropertyList: [
+    func testIdleLayoutIsReplacedByRequiredLinkedEntry() throws {
+        let plan = try plan(assetID: "new", plist: [
             "AllSpacesAndDisplays": ["Type": "idle"]
-        ], format: .binary, options: 0)
-        let plan = try WallpaperService.shared.planAerialWallpaperChange(assetID: "asset", plistData: data)
-        let modeWrite = try XCTUnwrap(plan.mutations.first { $0.keyPath == "AllSpacesAndDisplays.Type" })
-        XCTAssertTrue(modeWrite.isRequired, "A failed mode switch must not report a successful aerial change")
+        ])
+        let write = try XCTUnwrap(plan.mutations.first { $0.keyPath == "AllSpacesAndDisplays" })
+        XCTAssertTrue(write.isRequired, "A failed layout write must not report a successful aerial change")
+        let result = try applying(plan, to: ["AllSpacesAndDisplays": ["Type": "idle"]])
+        XCTAssertEqual(WallpaperStoreLayout.currentAssetID(in: result, displayUUID: nil), "new")
     }
 
     func testPerDisplayPlanTranslatesPersistedIdentifierToWallpaperStoreUUID() throws {
         let persisted = "00000610-0000A001-00000000"
         let native = "2C2AA742-7DE3-4C67-85E2-8D5D5466C641"
         let other = "92C5959A-666B-43A0-B77C-70D2D25C0174"
-        let data = try PropertyListSerialization.data(fromPropertyList: [
-            "AllSpacesAndDisplays": ["Type": "individual"],
-            "Displays": [native: [:], other: [:]]
-        ], format: .binary, options: 0)
+        let fixture: [String: Any] = [
+            "AllSpacesAndDisplays": "$null",
+            "Displays": [native: entry("old"), other: entry("other")]
+        ]
         let plan = try WallpaperService.shared.planAerialWallpaperChange(
-            assetID: "asset", displayUUID: persisted, plistData: data,
+            assetID: "asset", displayUUID: persisted, plistData: data(fixture),
             displayUUIDMapping: [persisted: native])
         XCTAssertEqual(plan.target, .display(uuid: native))
-        XCTAssertEqual(plan.configurationKeyPaths, [.desktopConfiguration(for: native)])
-        XCTAssertFalse(plan.mutations.contains { $0.keyPath.contains(persisted) || $0.keyPath.contains(other) })
+        XCTAssertFalse(plan.mutations.contains { $0.keyPath.contains(persisted) || "\($0.value)".contains(persisted) })
+        let result = try applying(plan, to: fixture)
+        XCTAssertEqual(WallpaperStoreLayout.currentAssetID(in: result, displayUUID: native), "asset")
+        XCTAssertEqual(WallpaperStoreLayout.currentAssetID(in: result, displayUUID: other), "other")
+    }
+
+    // MARK: - Index.plist layout (verified live on macOS 27)
+
+    private let mainDisplay = "66B343D4-A76F-4225-A97B-8AF122701588"
+    private let sideDisplay = "158F8AC5-0E8B-4BF5-91EF-4EF39D82FD6F"
+
+    func testAllDisplaysChangeReplacesPerDisplayLayout() throws {
+        let fixture: [String: Any] = [
+            "AllSpacesAndDisplays": "$null",
+            "Displays": [sideDisplay: entry("old")],
+            "Spaces": ["": ["Default": entry("old"), "Displays": [sideDisplay: entry("old")]]],
+            "SystemDefault": entry("old")
+        ]
+        let result = try applying(try plan(assetID: "new", plist: fixture), to: fixture)
+
+        XCTAssertEqual(WallpaperStoreLayout.currentAssetID(in: result, displayUUID: nil), "new")
+        XCTAssertEqual(WallpaperStoreLayout.currentAssetID(in: result, displayUUID: sideDisplay), "new",
+                       "An all-displays entry overrides display and Space entries")
+        XCTAssertEqual(WallpaperStoreLayout.assetID(inEntry: result["SystemDefault"]), "new")
+    }
+
+    func testFirstPerDisplayChangeKeepsOtherDisplaysOnTheirWallpaper() throws {
+        let fixture: [String: Any] = [
+            "AllSpacesAndDisplays": entry("old"),
+            "Displays": [String: Any](),
+            "Spaces": [String: Any]()
+        ]
+        let plan = try plan(assetID: "new", display: sideDisplay, connected: [mainDisplay, sideDisplay], plist: fixture)
+        let result = try applying(plan, to: fixture)
+
+        XCTAssertEqual(result["AllSpacesAndDisplays"] as? String, "$null")
+        XCTAssertEqual(WallpaperStoreLayout.currentAssetID(in: result, displayUUID: sideDisplay), "new")
+        XCTAssertEqual(WallpaperStoreLayout.currentAssetID(in: result, displayUUID: mainDisplay), "old")
+        XCTAssertNil(WallpaperStoreLayout.currentAssetID(in: result, displayUUID: nil),
+                     "Per-display entries are not one wallpaper everywhere")
+        XCTAssertEqual(plan.mutations.last?.keyPath, "AllSpacesAndDisplays",
+                       "A failed display write must leave the all-displays wallpaper in charge")
+    }
+
+    func testPerDisplayChangeDropsSpacesDerivedFromThatDisplay() throws {
+        let fixture: [String: Any] = [
+            "AllSpacesAndDisplays": "$null",
+            "Displays": [mainDisplay: entry("main"), sideDisplay: entry("side")],
+            "Spaces": [
+                "": ["Default": entry("main"), "Displays": [mainDisplay: entry("main")]],
+                "FDFEC175-6F7E-4C76-A588-2C5FECD5C155": ["Default": entry("side"), "Displays": [sideDisplay: entry("side")]]
+            ]
+        ]
+        let result = try applying(try plan(assetID: "new", display: sideDisplay, plist: fixture), to: fixture)
+
+        let spaces = try XCTUnwrap(result["Spaces"] as? [String: Any])
+        XCTAssertEqual(Array(spaces.keys), [""], "Only the Space derived from the changed display is dropped")
+        XCTAssertEqual(WallpaperStoreLayout.currentAssetID(in: result, displayUUID: sideDisplay), "new")
+        XCTAssertEqual(WallpaperStoreLayout.currentAssetID(in: result, displayUUID: mainDisplay), "main")
+    }
+
+    func testPerDisplayChangeCreatesMissingDisplayDictionary() throws {
+        let fixture: [String: Any] = ["AllSpacesAndDisplays": entry("old")]
+        let result = try applying(try plan(assetID: "new", display: sideDisplay, plist: fixture), to: fixture)
+        XCTAssertEqual(WallpaperStoreLayout.currentAssetID(in: result, displayUUID: sideDisplay), "new")
+    }
+
+    func testSpaceEntriesWinOverDisplayEntriesWhenReadingCurrentWallpaper() {
+        let plist: [String: Any] = [
+            "AllSpacesAndDisplays": "$null",
+            "Displays": [sideDisplay: entry("display")],
+            "Spaces": ["S": ["Displays": [sideDisplay: entry("space")]]]
+        ]
+        XCTAssertEqual(WallpaperStoreLayout.currentAssetID(in: plist, displayUUID: sideDisplay), "space")
+
+        var disagreeing = plist
+        disagreeing["Spaces"] = [
+            "S1": ["Displays": [sideDisplay: entry("a")]],
+            "S2": ["Displays": [sideDisplay: entry("b")]]
+        ]
+        XCTAssertNil(WallpaperStoreLayout.currentAssetID(in: disagreeing, displayUUID: sideDisplay))
+    }
+
+    func testNonAerialChoiceIsNotReportedAsAnAerial() {
+        let photo: [String: Any] = ["Type": "linked", "Linked": ["Content": ["Choices": [[
+            "Provider": "com.apple.wallpaper.choice.image",
+            "Configuration": Data("not an aerial".utf8),
+            "Files": [Any]()
+        ]]]]]
+        XCTAssertNil(WallpaperStoreLayout.currentAssetID(in: ["AllSpacesAndDisplays": photo], displayUUID: nil))
+    }
+
+    private func entry(_ assetID: String) -> [String: Any] {
+        let configuration = try! PropertyListSerialization.data(
+            fromPropertyList: ["assetID": assetID], format: .binary, options: 0)
+        return WallpaperStoreLayout.linkedEntry(choice: [
+            "Configuration": configuration,
+            "Files": [Any](),
+            "Provider": "com.apple.wallpaper.choice.aerials"
+        ], reusing: nil, at: Date(timeIntervalSince1970: 1_790_000_000))
+    }
+
+    private func data(_ plist: [String: Any]) throws -> Data {
+        try PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0)
+    }
+
+    private func plan(assetID: String, display: String? = nil, connected: [String] = [],
+                      plist: [String: Any]) throws -> WallpaperOperationPlan {
+        try WallpaperService.shared.planAerialWallpaperChange(
+            assetID: assetID, displayUUID: display, plistData: data(plist),
+            connectedDisplayUUIDs: connected)
+    }
+
+    /// Runs the planned plutil commands against a temporary copy, never the real store.
+    private func applying(_ plan: WallpaperOperationPlan, to plist: [String: Any]) throws -> [String: Any] {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).plist")
+        try data(plist).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        for mutation in plan.mutations {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/plutil")
+            process.arguments = mutation.plutilArguments(plistURL: url)
+            try process.run()
+            process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0, "plutil failed: \(mutation.purpose)")
+        }
+        return try XCTUnwrap(PropertyListSerialization.propertyList(
+            from: Data(contentsOf: url), format: nil) as? [String: Any])
     }
 
     func testFailedRedownloadPreservesWorkingFileAndCleansTemporaryDownload() async throws {

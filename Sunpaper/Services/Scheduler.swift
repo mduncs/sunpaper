@@ -61,6 +61,8 @@ protocol SlotSchedulerWallpaperServicing {
     @MainActor func setCustomWallpaper(path: String) throws
     @MainActor func setCustomWallpaper(path: String, displayUUID: String?) throws
     func getCurrentAssetID() throws -> String?
+    func getCurrentAssetID(displayUUID: String?) throws -> String?
+    @MainActor func isShowingCustomWallpaper(path: String, displayUUID: String?) -> Bool
 }
 
 extension SlotSchedulerWallpaperServicing {
@@ -71,6 +73,12 @@ extension SlotSchedulerWallpaperServicing {
     @MainActor func setCustomWallpaper(path: String, displayUUID: String?) throws {
         try setCustomWallpaper(path: path)
     }
+
+    func getCurrentAssetID(displayUUID: String?) throws -> String? {
+        try getCurrentAssetID()
+    }
+
+    @MainActor func isShowingCustomWallpaper(path: String, displayUUID: String?) -> Bool { true }
 }
 
 extension WallpaperService: SlotSchedulerWallpaperServicing {}
@@ -650,13 +658,22 @@ class SlotScheduler: ObservableObject {
         guard isRunning else { return }
         updateNow() // Also handles overrides that expired while the Mac slept.
         guard playbackMode == .following, applicationTask == nil,
-              config.displayMode == .allDisplays,
-              let job = scheduledJobs(at: dependencies.now()).first,
-              case .builtIn(let expectedAssetID) = job.target.source else { return }
-        let currentAssetID = try? dependencies.wallpaperService.getCurrentAssetID()
-        guard currentAssetID != expectedAssetID else { return }
+              scheduledJobs(at: dependencies.now()).contains(where: { !isShowing($0.target) }) else { return }
         lastAppliedTargets = nil
         updateNow()
+    }
+
+    /// Whether macOS still shows a target, for every display mode and source.
+    private func isShowing(_ target: ApplicationTarget) -> Bool {
+        let service = dependencies.wallpaperService
+        switch target.source {
+        case .builtIn(let assetID):
+            return (try? service.getCurrentAssetID(displayUUID: target.displayUUID)) == assetID
+        case .custom(let path):
+            return service.isShowingCustomWallpaper(path: path, displayUUID: target.displayUUID)
+        case .none:
+            return true
+        }
     }
 
     private func prefetchUpcoming() {

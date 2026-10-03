@@ -15,8 +15,8 @@ xcodebuild build -project Sunpaper.xcodeproj -scheme Sunpaper \
   -configuration Release -derivedDataPath build/release-check CODE_SIGNING_ALLOWED=NO
 ```
 
-These commands produce local, unsigned verification builds. The October 2,
-2026 baseline is **218 passing unit tests** and a successful Release build.
+These commands produce local, unsigned verification builds. The October 3,
+2026 baseline is **228 passing unit tests** and a successful Release build.
 Tests inject wallpaper services, timers, and display state; they do not change
 the real desktop. A passing build or local launch is not a live handoff test.
 
@@ -67,6 +67,26 @@ original display scope. Pickers and editors use drafts: cancellation neither
 applies wallpaper nor imports a file. Undoing an edit must not undo a later
 pause or smoothing preference. Aerial re-downloads preserve the working file
 until replacement succeeds; custom imports support still images only.
+
+## Wallpaper store layout
+
+Verified live on macOS 27 (October 2026), and modelled in
+`WallpaperStoreLayout`:
+
+- An `AllSpacesAndDisplays` dictionary is one wallpaper everywhere. It
+  overrides both `Displays` and `Spaces`.
+- Per-display wallpapers need `AllSpacesAndDisplays` set to the string `$null`,
+  plus `Displays.<UUID>` entries keyed by `CGDisplayCreateUUIDFromDisplayID`.
+  Sunpaper's own saved display IDs are translated only when writing.
+- WallpaperAgent then derives `Spaces.<space>` entries from `Displays`. Those
+  win afterwards, so a per-display change drops the Spaces that reference its
+  display.
+
+Sunpaper writes whole entries (`{Type: linked, Linked: {Content, LastSet,
+LastUse}}`) so a missing parent key can't fail a change. Leaving all-displays
+mode copies the current wallpaper to the other connected displays first.
+Verification compares each display's entry, and each custom image, with the
+schedule.
 
 ## Smooth wallpaper handoff
 

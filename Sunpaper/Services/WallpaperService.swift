@@ -4,52 +4,9 @@ import ImageIO
 
 // MARK: - Wallpaper Operation Planning
 
-enum WallpaperPlistMode: Equatable, Sendable, CustomStringConvertible {
-    case linked
-    case individual(displayUUIDs: [String])
-    case idle(displayUUIDs: [String])
-    case unknown(type: String?, displayUUIDs: [String], reason: String)
-
-    var description: String {
-        switch self {
-        case .linked:
-            return "linked"
-        case .individual(let displayUUIDs):
-            return "individual(\(displayUUIDs.count) display(s))"
-        case .idle(let displayUUIDs):
-            return "idle(\(displayUUIDs.count) display(s))"
-        case .unknown(let type, _, let reason):
-            return "unknown(type: \(type ?? "nil"), reason: \(reason))"
-        }
-    }
-}
-
 enum WallpaperTargetSelection: Equatable, Sendable {
     case allDisplays
     case display(uuid: String)
-}
-
-struct WallpaperPlistKeyPath: Equatable, Sendable {
-    let configuration: String
-
-    var provider: String {
-        configuration.replacingOccurrences(of: ".Configuration", with: ".Provider")
-    }
-
-    static let linkedConfigurationKeyPaths: [WallpaperPlistKeyPath] = [
-        WallpaperPlistKeyPath(configuration: "AllSpacesAndDisplays.Linked.Content.Choices.0.Configuration"),
-        WallpaperPlistKeyPath(configuration: "SystemDefault.Linked.Content.Choices.0.Configuration")
-    ]
-
-    static let linkedCurrentConfigurationKeyPaths: [WallpaperPlistKeyPath] = linkedConfigurationKeyPaths
-
-    static func desktopConfiguration(for displayUUID: String) -> WallpaperPlistKeyPath {
-        WallpaperPlistKeyPath(configuration: "Displays.\(displayUUID).Desktop.Content.Choices.0.Configuration")
-    }
-
-    static func idleConfiguration(for displayUUID: String) -> WallpaperPlistKeyPath {
-        WallpaperPlistKeyPath(configuration: "Displays.\(displayUUID).Idle.Content.Choices.0.Configuration")
-    }
 }
 
 struct WallpaperProviderConfigurationPayload: Equatable, Sendable {
@@ -86,6 +43,8 @@ struct WallpaperPlistMutation: Equatable, Sendable {
     enum Value: Equatable, Sendable {
         case string(String)
         case base64Data(String)
+        /// A property list fragment that replaces the whole value at `keyPath`.
+        case xml(String)
     }
 
     let keyPath: String
@@ -99,6 +58,8 @@ struct WallpaperPlistMutation: Equatable, Sendable {
             return ["-replace", keyPath, "-string", value, plistURL.path]
         case .base64Data(let value):
             return ["-replace", keyPath, "-data", value, plistURL.path]
+        case .xml(let value):
+            return ["-replace", keyPath, "-xml", value, plistURL.path]
         }
     }
 }
@@ -122,13 +83,169 @@ struct WallpaperProcessRestartSequence: Equatable, Sendable {
 }
 
 struct WallpaperOperationPlan: Equatable, Sendable {
-    let mode: WallpaperPlistMode
     let target: WallpaperTargetSelection
-    let configurationKeyPaths: [WallpaperPlistKeyPath]
     let payload: WallpaperProviderConfigurationPayload
     let mutations: [WallpaperPlistMutation]
     let restartSequence: WallpaperProcessRestartSequence
     let diagnostics: [WallpaperDiagnostic]
+}
+
+/// How WallpaperAgent resolves Index.plist, verified live on macOS 27 (October 2026):
+/// - An `AllSpacesAndDisplays` dictionary applies to every display and Space,
+///   overriding both `Displays` and `Spaces`.
+/// - Per-display wallpapers need `AllSpacesAndDisplays` set to "$null" plus a
+///   `Displays.<display UUID>` entry keyed by `CGDisplayCreateUUIDFromDisplayID`.
+/// - WallpaperAgent then derives `Spaces.<space>` entries from `Displays`. Those
+///   win afterwards (the agent copies them back over `Displays`), so a
+///   per-display write drops every Space that references its display.
+/// Entries are `{Type: linked, Linked: {Content: {Choices, Shuffle}, LastSet, LastUse}}`.
+/// Whole entries are written so a missing parent key path can't fail a change.
+enum WallpaperStoreLayout {
+    static let nullValue = "$null"
+    static let allDisplaysKey = "AllSpacesAndDisplays"
+    static let displaysKey = "Displays"
+    static let spacesKey = "Spaces"
+    static let systemDefaultKey = "SystemDefault"
+
+    static func plan(
+        payload: WallpaperProviderConfigurationPayload,
+        target: WallpaperTargetSelection,
+        connectedDisplayUUIDs: [String],
+        plist: [String: Any],
+        now: Date
+    ) throws -> (mutations: [WallpaperPlistMutation], diagnostics: [WallpaperDiagnostic]) {
+        guard let configuration = Data(base64Encoded: payload.base64Configuration) else {
+            throw WallpaperError.plistUpdateFailed(keyPath: allDisplaysKey)
+        }
+        let choice: [String: Any] = [
+            "Configuration": configuration,
+            "Files": [Any](),
+            "Provider": payload.providerIdentifier
+        ]
+        let allDisplays = plist[allDisplaysKey] as? [String: Any]
+        var mutations: [WallpaperPlistMutation] = []
+        var diagnostics: [WallpaperDiagnostic] = []
+
+        switch target {
+        case .allDisplays:
+            mutations.append(WallpaperPlistMutation(
+                keyPath: allDisplaysKey,
+                value: .xml(try xmlFragment(linkedEntry(choice: choice, reusing: allDisplays, at: now))),
+                isRequired: true,
+                purpose: "aerial for all displays"
+            ))
+            if let systemDefault = plist[systemDefaultKey] as? [String: Any] {
+                mutations.append(WallpaperPlistMutation(
+                    keyPath: systemDefaultKey,
+                    value: .xml(try xmlFragment(linkedEntry(choice: choice, reusing: systemDefault, at: now))),
+                    isRequired: false,
+                    purpose: "system default aerial"
+                ))
+            }
+
+        case .display(let displayUUID):
+            var displays = plist[displaysKey] as? [String: Any] ?? [:]
+            if let allDisplays {
+                // Leaving all-displays mode: keep every other display on the
+                // wallpaper it shows now instead of falling back to a default.
+                for other in connectedDisplayUUIDs where other != displayUUID && displays[other] == nil {
+                    displays[other] = allDisplays
+                }
+                diagnostics.append(WallpaperDiagnostic(
+                    severity: .info,
+                    message: "Switching Index.plist from one wallpaper everywhere to per-display entries.",
+                    recoveryHint: nil
+                ))
+            }
+            displays[displayUUID] = linkedEntry(choice: choice, reusing: displays[displayUUID] ?? allDisplays, at: now)
+            mutations.append(WallpaperPlistMutation(
+                keyPath: displaysKey,
+                value: .xml(try xmlFragment(displays)),
+                isRequired: true,
+                purpose: "per-display aerial"
+            ))
+
+            if var spaces = plist[spacesKey] as? [String: Any] {
+                let stale = spaces.filter { references($0.value, display: displayUUID) }.map(\.key)
+                if !stale.isEmpty {
+                    stale.forEach { spaces.removeValue(forKey: $0) }
+                    mutations.append(WallpaperPlistMutation(
+                        keyPath: spacesKey,
+                        value: .xml(try xmlFragment(spaces)),
+                        isRequired: true,
+                        purpose: "drop Space entries derived from the old per-display wallpaper"
+                    ))
+                }
+            }
+
+            // Last, so a failed write above leaves the all-displays wallpaper in charge.
+            if allDisplays != nil {
+                mutations.append(WallpaperPlistMutation(
+                    keyPath: allDisplaysKey,
+                    value: .string(nullValue),
+                    isRequired: true,
+                    purpose: "enable per-display entries"
+                ))
+            }
+        }
+        return (mutations, diagnostics)
+    }
+
+    /// The aerial a display (or every display, for nil) is configured to show.
+    /// Nil when the store can't answer for that scope, so callers reassert.
+    static func currentAssetID(in plist: [String: Any], displayUUID: String?) -> String? {
+        if let allDisplays = plist[allDisplaysKey] as? [String: Any] {
+            return assetID(inEntry: allDisplays)
+        }
+        guard let displayUUID else { return nil }
+        let spaceEntries = (plist[spacesKey] as? [String: Any] ?? [:]).values.compactMap {
+            (($0 as? [String: Any])?[displaysKey] as? [String: Any])?[displayUUID]
+        }
+        if !spaceEntries.isEmpty {
+            let assetIDs = Set(spaceEntries.map(assetID(inEntry:)))
+            return assetIDs.count == 1 ? assetIDs.first ?? nil : nil
+        }
+        return assetID(inEntry: (plist[displaysKey] as? [String: Any])?[displayUUID])
+    }
+
+    static func linkedEntry(choice: [String: Any], reusing existing: Any?, at date: Date) -> [String: Any] {
+        var content: [String: Any] = ["Choices": [choice], "Shuffle": nullValue]
+        let existingContent = ((existing as? [String: Any])?["Linked"] as? [String: Any])?["Content"] as? [String: Any]
+        if let options = existingContent?["EncodedOptionValues"] {
+            content["EncodedOptionValues"] = options
+        }
+        return ["Type": "linked", "Linked": ["Content": content, "LastSet": date, "LastUse": date]]
+    }
+
+    static func assetID(inEntry entry: Any?) -> String? {
+        guard let entry = entry as? [String: Any] else { return nil }
+        let sections = (entry["Type"] as? String) == "individual" ? ["Desktop", "Linked"] : ["Linked", "Desktop"]
+        for section in sections {
+            guard let choices = ((entry[section] as? [String: Any])?["Content"] as? [String: Any])?["Choices"] as? [Any],
+                  let choice = choices.first as? [String: Any] else { continue }
+            guard choice["Provider"] as? String == "com.apple.wallpaper.choice.aerials",
+                  let data = choice["Configuration"] as? Data,
+                  let configuration = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
+                return nil
+            }
+            return configuration["assetID"] as? String
+        }
+        return nil
+    }
+
+    static func xmlFragment(_ value: Any) throws -> String {
+        let data = try PropertyListSerialization.data(fromPropertyList: value, format: .xml, options: 0)
+        let xml = String(decoding: data, as: UTF8.self)
+        guard let start = xml.range(of: "<plist version=\"1.0\">"),
+              let end = xml.range(of: "</plist>", options: .backwards) else {
+            throw WallpaperError.plistUpdateFailed(keyPath: "xml")
+        }
+        return xml[start.upperBound..<end.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func references(_ space: Any, display displayUUID: String) -> Bool {
+        ((space as? [String: Any])?[displaysKey] as? [String: Any])?[displayUUID] != nil
+    }
 }
 
 /// Service for changing macOS aerial video wallpapers.
@@ -139,8 +256,6 @@ final class WallpaperService: @unchecked Sendable {
 
     private enum Constants {
         static let aerialProviderIdentifier = "com.apple.wallpaper.choice.aerials"
-        static let allSpacesTypeKeyPath = "AllSpacesAndDisplays.Type"
-        static let linkedTypeValue = "linked"
         static let preMutationProcesses = ["WallpaperAgent", "WallpaperAerialsExtension"]
         static let reloadProcesses = ["WallpaperAgent"]
         static let preMutationDelay: TimeInterval = 0.3
@@ -254,10 +369,36 @@ final class WallpaperService: @unchecked Sendable {
         assetID: String,
         displayUUID: String? = nil,
         plistData: Data,
-        displayUUIDMapping: [String: String] = [:]
+        displayUUIDMapping: [String: String] = [:],
+        connectedDisplayUUIDs: [String] = [],
+        now: Date = Date()
     ) throws -> WallpaperOperationPlan {
         let targetUUID = displayUUID.map { displayUUIDMapping[$0] ?? $0 }
-        return try makeAerialWallpaperPlan(assetID: assetID, displayUUID: targetUUID, plistData: plistData)
+        let payload = try WallpaperProviderConfigurationPayload(
+            assetID: assetID,
+            providerIdentifier: Constants.aerialProviderIdentifier
+        )
+        let target = targetUUID.map { WallpaperTargetSelection.display(uuid: $0) } ?? .allDisplays
+        var diagnostics: [WallpaperDiagnostic] = []
+        let parsed = try? PropertyListSerialization.propertyList(from: plistData, format: nil)
+        let plist = parsed as? [String: Any] ?? [:]
+        if parsed == nil || plist.isEmpty {
+            diagnostics.append(WallpaperDiagnostic(
+                severity: .warning,
+                message: "Index.plist could not be read as a dictionary; writing complete entries.",
+                recoveryHint: "Change the wallpaper in System Settings to regenerate a valid wallpaper plist."
+            ))
+        }
+        let layout = try WallpaperStoreLayout.plan(
+            payload: payload, target: target, connectedDisplayUUIDs: connectedDisplayUUIDs,
+            plist: plist, now: now)
+        return WallpaperOperationPlan(
+            target: target,
+            payload: payload,
+            mutations: layout.mutations,
+            restartSequence: .directIndexPlistMutation,
+            diagnostics: diagnostics + layout.diagnostics
+        )
     }
 
     /// Set wallpaper by asset ID for all displays.
@@ -307,7 +448,8 @@ final class WallpaperService: @unchecked Sendable {
                 displayUUIDMapping[displayUUID] = nativeUUID
             }
             let plan = try planAerialWallpaperChange(assetID: assetID, displayUUID: displayUUID,
-                plistData: original, displayUUIDMapping: displayUUIDMapping)
+                plistData: original, displayUUIDMapping: displayUUIDMapping,
+                connectedDisplayUUIDs: DisplayManager.shared.connectedWallpaperDisplayUUIDs())
             logDiagnostics(plan.diagnostics)
             try await WallpaperTransition.shared.perform(videoURL: videoURL(assetID: assetID), displayUUID: displayUUID, smoothChanges: smoothChanges) {
                 // Process waits and plist tools must not block AppKit's cover rendering.
@@ -369,13 +511,18 @@ final class WallpaperService: @unchecked Sendable {
     }
 
     @MainActor
-    private func setStaticWallpaper(url: URL, displayUUID: String?) throws {
-        let workspace = NSWorkspace.shared
-        let screens = NSScreen.screens.filter { screen in
+    private func screens(for displayUUID: String?) -> [NSScreen] {
+        NSScreen.screens.filter { screen in
             guard let displayUUID else { return true }
             guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return false }
             return DisplayManager.shared.getDisplayUUID(displayID: number.uint32Value) == displayUUID
         }
+    }
+
+    @MainActor
+    private func setStaticWallpaper(url: URL, displayUUID: String?) throws {
+        let workspace = NSWorkspace.shared
+        let screens = screens(for: displayUUID)
         guard !screens.isEmpty else { throw WallpaperError.noMainScreen }
         for screen in screens { try workspace.setDesktopImageURL(url, for: screen, options: [:]) }
         #if DEBUG
@@ -383,259 +530,37 @@ final class WallpaperService: @unchecked Sendable {
         #endif
     }
 
-    /// Get current wallpaper asset ID without mutating Index.plist.
+    /// Get the aerial shown on every display without mutating Index.plist.
     func getCurrentAssetID() throws -> String? {
-        let plistData = FileManager.default.contents(atPath: indexPlistURL.path)
-        let mode = Self.detectPlistMode(plistData: plistData).mode
-        let keyPaths = Self.currentConfigurationKeyPaths(for: mode)
+        try getCurrentAssetID(displayUUID: nil)
+    }
 
-        for keyPath in keyPaths {
-            guard let base64String = try extractRawConfiguration(at: keyPath.configuration),
-                  let configData = Data(base64Encoded: base64String) else {
-                continue
-            }
-
-            let config = try PropertyListSerialization.propertyList(from: configData, format: nil) as? [String: String]
-            if let assetID = config?["assetID"] {
-                return assetID
-            }
+    /// Get the aerial a display is configured to show, or the one shown on
+    /// every display for nil. Nil when Index.plist can't answer for that scope.
+    func getCurrentAssetID(displayUUID: String?) throws -> String? {
+        guard let data = FileManager.default.contents(atPath: indexPlistURL.path),
+              let plist = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
+            return nil
         }
+        var nativeUUID: String?
+        if let displayUUID {
+            guard let uuid = DisplayManager.shared.getWallpaperDisplayUUID(for: displayUUID) else { return nil }
+            nativeUUID = uuid
+        }
+        return WallpaperStoreLayout.currentAssetID(in: plist, displayUUID: nativeUUID)
+    }
 
-        return nil
+    /// Whether every targeted screen currently shows the still image at `path`.
+    @MainActor
+    func isShowingCustomWallpaper(path: String, displayUUID: String?) -> Bool {
+        let expected = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        return screens(for: displayUUID).allSatisfy { screen in
+            NSWorkspace.shared.desktopImageURL(for: screen)?.resolvingSymlinksInPath().path == expected
+        }
     }
 
     private func videoURL(assetID: String) -> URL {
         videosDirectoryURL.appendingPathComponent("\(assetID).mov")
-    }
-
-    private func makeAerialWallpaperPlan(
-        assetID: String,
-        displayUUID: String?,
-        plistData: Data?
-    ) throws -> WallpaperOperationPlan {
-        let payload = try WallpaperProviderConfigurationPayload(
-            assetID: assetID,
-            providerIdentifier: Constants.aerialProviderIdentifier
-        )
-        let target = displayUUID.map { WallpaperTargetSelection.display(uuid: $0) } ?? .allDisplays
-        let detection = Self.detectPlistMode(plistData: plistData)
-        var diagnostics = detection.diagnostics
-
-        let resolution = Self.configurationKeyPaths(
-            mode: detection.mode,
-            target: target
-        )
-        diagnostics.append(contentsOf: resolution.diagnostics)
-
-        var mutations: [WallpaperPlistMutation] = []
-        if resolution.shouldForceLinkedMode {
-            mutations.append(WallpaperPlistMutation(
-                keyPath: Constants.allSpacesTypeKeyPath,
-                value: .string(Constants.linkedTypeValue),
-                isRequired: true,
-                purpose: "idle mode linked recovery"
-            ))
-        }
-
-        for keyPath in resolution.keyPaths {
-            mutations.append(WallpaperPlistMutation(
-                keyPath: keyPath.provider,
-                value: .string(payload.providerIdentifier),
-                isRequired: true,
-                purpose: "aerial provider"
-            ))
-            mutations.append(WallpaperPlistMutation(
-                keyPath: keyPath.configuration,
-                value: .base64Data(payload.base64Configuration),
-                isRequired: true,
-                purpose: "aerial configuration"
-            ))
-        }
-
-        return WallpaperOperationPlan(
-            mode: detection.mode,
-            target: target,
-            configurationKeyPaths: resolution.keyPaths,
-            payload: payload,
-            mutations: mutations,
-            restartSequence: .directIndexPlistMutation,
-            diagnostics: diagnostics
-        )
-    }
-
-    private static func detectPlistMode(plistData: Data?) -> (
-        mode: WallpaperPlistMode,
-        diagnostics: [WallpaperDiagnostic]
-    ) {
-        guard let plistData else {
-            return (
-                .unknown(type: nil, displayUUIDs: [], reason: "Index.plist could not be read"),
-                [WallpaperDiagnostic(
-                    severity: .warning,
-                    message: "Index.plist could not be read for planning; falling back to linked key paths.",
-                    recoveryHint: "Check wallpaper plist permissions or open Wallpaper settings once before retrying."
-                )]
-            )
-        }
-
-        do {
-            guard let plist = try PropertyListSerialization.propertyList(from: plistData, format: nil) as? [String: Any] else {
-                return (
-                    .unknown(type: nil, displayUUIDs: [], reason: "Index.plist root is not a dictionary"),
-                    [WallpaperDiagnostic(
-                        severity: .warning,
-                        message: "Index.plist root is not a dictionary; falling back to linked key paths.",
-                        recoveryHint: "Change the wallpaper in System Settings to regenerate a valid wallpaper plist."
-                    )]
-                )
-            }
-
-            return (detectPlistMode(plist: plist), [])
-        } catch {
-            return (
-                .unknown(type: nil, displayUUIDs: [], reason: "Index.plist could not be parsed: \(error.localizedDescription)"),
-                [WallpaperDiagnostic(
-                    severity: .warning,
-                    message: "Index.plist could not be parsed; falling back to linked key paths.",
-                    recoveryHint: "Change the wallpaper in System Settings to regenerate a valid wallpaper plist."
-                )]
-            )
-        }
-    }
-
-    private static func detectPlistMode(plist: [String: Any]) -> WallpaperPlistMode {
-        let displayUUIDs = (plist["Displays"] as? [String: Any])?.keys.sorted() ?? []
-        let typeValue = (plist["AllSpacesAndDisplays"] as? [String: Any])?["Type"] as? String
-
-        switch typeValue {
-        case "linked":
-            return .linked
-        case "individual":
-            return .individual(displayUUIDs: displayUUIDs)
-        case "idle":
-            return .idle(displayUUIDs: displayUUIDs)
-        case .some(let unknownType):
-            if !displayUUIDs.isEmpty {
-                return .individual(displayUUIDs: displayUUIDs)
-            }
-            return .unknown(
-                type: unknownType,
-                displayUUIDs: displayUUIDs,
-                reason: "Unrecognized AllSpacesAndDisplays.Type"
-            )
-        case nil:
-            if !displayUUIDs.isEmpty {
-                return .individual(displayUUIDs: displayUUIDs)
-            }
-            return .unknown(
-                type: nil,
-                displayUUIDs: displayUUIDs,
-                reason: "Missing AllSpacesAndDisplays.Type"
-            )
-        }
-    }
-
-    private static func configurationKeyPaths(
-        mode: WallpaperPlistMode,
-        target: WallpaperTargetSelection
-    ) -> (
-        keyPaths: [WallpaperPlistKeyPath],
-        shouldForceLinkedMode: Bool,
-        diagnostics: [WallpaperDiagnostic]
-    ) {
-        var diagnostics: [WallpaperDiagnostic] = []
-
-        switch target {
-        case .display(let displayUUID):
-            switch mode {
-            case .individual(let displayUUIDs) where !displayUUIDs.contains(displayUUID):
-                diagnostics.append(WallpaperDiagnostic(
-                    severity: .warning,
-                    message: "Target display \(displayUUID) is not present in Index.plist Displays.",
-                    recoveryHint: "Reconnect the display or change per-display wallpaper once in System Settings."
-                ))
-            case .linked:
-                diagnostics.append(WallpaperDiagnostic(
-                    severity: .info,
-                    message: "Per-display target requested while Index.plist is linked; preserving direct Desktop key-path write.",
-                    recoveryHint: nil
-                ))
-            case .idle:
-                diagnostics.append(WallpaperDiagnostic(
-                    severity: .warning,
-                    message: "Per-display target requested while Index.plist is idle; preserving existing Desktop key-path behavior.",
-                    recoveryHint: "If macOS ignores the update, switch out of idle wallpaper mode in System Settings."
-                ))
-            case .unknown(_, _, let reason):
-                diagnostics.append(WallpaperDiagnostic(
-                    severity: .warning,
-                    message: "Per-display target planned with unknown plist mode: \(reason).",
-                    recoveryHint: "The plutil write will fail if the display Desktop key path does not exist."
-                ))
-            default:
-                break
-            }
-
-            return ([.desktopConfiguration(for: displayUUID)], false, diagnostics)
-
-        case .allDisplays:
-            switch mode {
-            case .linked:
-                return (WallpaperPlistKeyPath.linkedConfigurationKeyPaths, false, diagnostics)
-
-            case .idle:
-                diagnostics.append(WallpaperDiagnostic(
-                    severity: .warning,
-                    message: "Index.plist is in idle mode; plan requires linked-mode recovery before aerial writes.",
-                    recoveryHint: "Idle mode uses different key paths, so direct aerial writes target linked mode after recovery."
-                ))
-                return (WallpaperPlistKeyPath.linkedConfigurationKeyPaths, true, diagnostics)
-
-            case .individual(let displayUUIDs):
-                guard !displayUUIDs.isEmpty else {
-                    diagnostics.append(WallpaperDiagnostic(
-                        severity: .warning,
-                        message: "Index.plist is individual mode but has no display entries; falling back to linked key paths.",
-                        recoveryHint: "Open Wallpaper settings and configure at least one display if per-display updates are expected."
-                    ))
-                    return (WallpaperPlistKeyPath.linkedConfigurationKeyPaths, false, diagnostics)
-                }
-
-                return (displayUUIDs.map(WallpaperPlistKeyPath.desktopConfiguration), false, diagnostics)
-
-            case .unknown(_, let displayUUIDs, let reason):
-                diagnostics.append(WallpaperDiagnostic(
-                    severity: .warning,
-                    message: "Wallpaper plist mode is unknown: \(reason).",
-                    recoveryHint: "The plan uses the safest known key-path fallback for the available plist structure."
-                ))
-
-                if displayUUIDs.isEmpty {
-                    return (WallpaperPlistKeyPath.linkedConfigurationKeyPaths, false, diagnostics)
-                }
-
-                return (displayUUIDs.map(WallpaperPlistKeyPath.desktopConfiguration), false, diagnostics)
-            }
-        }
-    }
-
-    private static func currentConfigurationKeyPaths(for mode: WallpaperPlistMode) -> [WallpaperPlistKeyPath] {
-        switch mode {
-        case .linked:
-            return WallpaperPlistKeyPath.linkedCurrentConfigurationKeyPaths
-        case .individual(let displayUUIDs):
-            let displayKeyPaths = displayUUIDs.map(WallpaperPlistKeyPath.desktopConfiguration)
-            return displayKeyPaths.isEmpty ? WallpaperPlistKeyPath.linkedCurrentConfigurationKeyPaths : displayKeyPaths
-        case .idle(let displayUUIDs):
-            var keyPaths = [
-                WallpaperPlistKeyPath(configuration: "AllSpacesAndDisplays.Idle.Content.Choices.0.Configuration")
-            ]
-            keyPaths.append(contentsOf: displayUUIDs.map(WallpaperPlistKeyPath.idleConfiguration))
-            return keyPaths
-        case .unknown(_, let displayUUIDs, _):
-            let displayKeyPaths = displayUUIDs.map(WallpaperPlistKeyPath.desktopConfiguration)
-            return displayKeyPaths.isEmpty ? WallpaperPlistKeyPath.linkedCurrentConfigurationKeyPaths : displayKeyPaths
-        }
     }
 
     private func applyMutations(_ mutations: [WallpaperPlistMutation]) throws {
@@ -666,30 +591,6 @@ final class WallpaperService: @unchecked Sendable {
                 #endif
             }
         }
-    }
-
-    private func extractRawConfiguration(at keyPath: String) throws -> String? {
-        let process = Process()
-        let pipe = Pipe()
-
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/plutil")
-        process.arguments = [
-            "-extract",
-            keyPath,
-            "raw",
-            indexPlistURL.path
-        ]
-        process.standardOutput = pipe
-
-        try process.run()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-            return nil
-        }
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func runPlutil(arguments: [String]) throws -> CommandResult {

@@ -116,6 +116,28 @@ final class DisplayManager: Sendable {
     /// `display-XXXXXXXX` fallback so existing per-display config remains
     /// compatible, even though that fallback is not guaranteed to be stable.
     func getDisplayUUID(displayID: CGDirectDisplayID) -> String? {
+        let connected = Set(activeDisplayIDs()).union([displayID]).map { id in
+            (id: id, hardware: hardwareIdentifier(displayID: id), native: nativeDisplayUUID(displayID: id))
+        }
+        return Self.persistedIdentifiers(for: connected)[displayID]
+    }
+
+    /// Identical displays without serial numbers share a hardware descriptor.
+    /// Only connected twins get macOS's display UUID appended, so every other
+    /// saved identifier stays unchanged.
+    static func persistedIdentifiers(
+        for displays: [(id: CGDirectDisplayID, hardware: String, native: String?)]
+    ) -> [CGDirectDisplayID: String] {
+        let counts = Dictionary(displays.map { ($0.hardware, 1) }, uniquingKeysWith: +)
+        return Dictionary(displays.map { display in
+            guard counts[display.hardware, default: 0] > 1, let native = display.native else {
+                return (display.id, display.hardware)
+            }
+            return (display.id, "\(display.hardware)-\(native)")
+        }, uniquingKeysWith: { first, _ in first })
+    }
+
+    private func hardwareIdentifier(displayID: CGDirectDisplayID) -> String {
         let vendorID = CGDisplayVendorNumber(displayID)
         let modelID = CGDisplayModelNumber(displayID)
         let serialNumber = CGDisplaySerialNumber(displayID)
@@ -127,19 +149,27 @@ final class DisplayManager: Sendable {
         return String(format: "display-%08X", displayID)
     }
 
+    private func nativeDisplayUUID(displayID: CGDirectDisplayID) -> String? {
+        guard let uuid = CGDisplayCreateUUIDFromDisplayID(displayID)?.takeRetainedValue() else { return nil }
+        return CFUUIDCreateString(nil, uuid) as String
+    }
+
+    private func activeDisplayIDs() -> [CGDirectDisplayID] {
+        var count: UInt32 = 0
+        var ids = [CGDirectDisplayID](repeating: 0, count: 16)
+        guard CGGetActiveDisplayList(UInt32(ids.count), &ids, &count) == .success else { return [] }
+        return Array(ids.prefix(Int(count)))
+    }
+
     /// Index.plist uses macOS display UUIDs, not our persisted hardware identifiers.
     /// Keep saved schedule identifiers unchanged and translate only at the write boundary.
-    @MainActor
     func getWallpaperDisplayUUID(for displayUUID: String) -> String? {
-        for screen in NSScreen.screens {
-            guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber,
-                  getDisplayUUID(displayID: number.uint32Value) == displayUUID,
-                  let uuid = CGDisplayCreateUUIDFromDisplayID(number.uint32Value)?.takeRetainedValue() else {
-                continue
-            }
-            return CFUUIDCreateString(nil, uuid) as String
-        }
-        return nil
+        activeDisplayIDs().first { getDisplayUUID(displayID: $0) == displayUUID }.flatMap(nativeDisplayUUID)
+    }
+
+    /// The Index.plist keys of every connected display.
+    func connectedWallpaperDisplayUUIDs() -> [String] {
+        activeDisplayIDs().compactMap(nativeDisplayUUID)
     }
 
     /// Get human-readable name for a display

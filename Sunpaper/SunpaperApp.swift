@@ -149,7 +149,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         let window = notification.object as? NSWindow
-        if window === scheduleWindow { scheduleWindow = nil }
+        if window === scheduleWindow {
+            scheduleWindow = nil
+            // A picker that outlives its window must not reappear on reopen.
+            controller.isChoosingWallpaper = false
+        }
         if window === settingsWindow { settingsWindow = nil }
     }
 
